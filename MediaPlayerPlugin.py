@@ -6,7 +6,7 @@ from typing import Any, Callable, Literal, TypedDict, cast, final, override
 import asyncio
 from openai.types.chat import ChatCompletionMessageParam
 from winrt.windows.foundation import EventRegistrationToken
-from winrt.windows.media.control import CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionManager as MediaManager, GlobalSystemMediaTransportControlsSessionMediaProperties
+from winrt.windows.media.control import CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager as MediaManager, GlobalSystemMediaTransportControlsSessionMediaProperties, PlaybackInfoChangedEventArgs
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -57,7 +57,8 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
 class MediaPlayerPlugin(PluginBase):
     media_session_manager: MediaManager
     DEFAULT_PLAYBACK_METHOD: str = 'wmsa'
-    session_changed_handler_registration_token: EventRegistrationToken | None
+    current_session_changed_handler_registration_token: EventRegistrationToken | None = None
+    playback_info_changed_handler_registration_token: EventRegistrationToken | None = None
     
     def __init__(self): # This is the name that will be shown in the UI.
         super().__init__(plugin_name = "Media Player", event_classes = [WMSAStateValueUpdatedEvent])
@@ -146,7 +147,7 @@ class MediaPlayerPlugin(PluginBase):
             pass
         elif media_playback_method == "wmsa":
             # Register Windows Media Session API projections
-            self.session_changed_handler_registration_token = self.media_session_manager.add_current_session_changed(lambda session, eventArgs: self.session_changed_handler(helper, session, eventArgs))
+            self.current_session_changed_handler_registration_token = self.media_session_manager.add_current_session_changed(lambda session, eventArgs: self.current_session_changed_handler(helper, session, eventArgs))
             helper.register_projection(CurrentMediaPlaybackState())
         elif media_playback_method == "mpv":
             # Register MPV projections
@@ -178,8 +179,8 @@ class MediaPlayerPlugin(PluginBase):
     @override
     def on_chat_stop(self, helper: PluginHelper):
         # Executed when the chat is stopped
-        if self.session_changed_handler_registration_token is not None:
-            self.media_session_manager.remove_current_session_changed(self.session_changed_handler_registration_token)
+        if self.current_session_changed_handler_registration_token is not None:
+            self.media_session_manager.remove_current_session_changed(self.current_session_changed_handler_registration_token)
         log('debug', f"Executed on_chat_stop hook for {self.plugin_name}")
 
     # Actions
@@ -225,28 +226,25 @@ class MediaPlayerPlugin(PluginBase):
             
         return "Activated Windows Media Session API action: " + action
 
-    def session_changed_handler(self, helper: PluginHelper, session: MediaManager, eventArgs: CurrentSessionChangedEventArgs):
-        log('info', 'Session changed: ', session)
-        playback_info = asyncio.run(self.wmsa_get_media_properties(session))
-        if playback_info is None:
-            return
-        state: dict[str, str] = {
-            # 'album_artist': playback_info.album_artist,
-            # 'album_title': playback_info.album_title,
-            # 'album_track_count': playback_info.album_track_count,
-            'artist': playback_info.artist,
-            # 'genres': cast(list[str], playback_info.genres),
-            # 'playback_type': playback_info.playback_type, # Not available, despite typings
-            'subtitle': playback_info.subtitle,
-            # 'thumbnail': playback_info.thumbnail,
-            'title': playback_info.title,
-            # 'track_number': playback_info.track_number,
-            }
-        log('info', 'Current state: ', state)
-        self.set_wmsa_state(helper, state)
+    def current_session_changed_handler(self, helper: PluginHelper, session: MediaManager, eventArgs: CurrentSessionChangedEventArgs):
+        current_session = session.get_current_session()
+        if self.playback_info_changed_handler_registration_token is not None:
+            for running_session in session.get_sessions():
+                running_session.remove_playback_info_changed(self.playback_info_changed_handler_registration_token)
+        self.playback_info_changed_handler_registration_token = current_session.add_playback_info_changed(lambda session, eventArgs: self.playback_info_changed_handler(helper, session, eventArgs))
 
-    async def wmsa_get_media_properties(self, session: MediaManager) -> GlobalSystemMediaTransportControlsSessionMediaProperties | None:
-        return await session.get_current_session().try_get_media_properties_async()
+        log('info', 'Session changed: ', session)
+        self.set_wmsa_state(helper, current_session)
+
+    def playback_info_changed_handler(self, helper: PluginHelper, session: GlobalSystemMediaTransportControlsSession, eventArgs: PlaybackInfoChangedEventArgs):
+        log('info', 'Playback info changed: ', session)
+        self.set_wmsa_state(helper, session)
+
+    async def wmsa_get_media_properties(self, session: GlobalSystemMediaTransportControlsSession) -> GlobalSystemMediaTransportControlsSessionMediaProperties | None:
+        # log('debug', 'MediaManager: ', session)
+        # curr_session = session.get_current_session()
+        # log('debug', 'Current session: ', curr_session)
+        return await session.try_get_media_properties_async()
 
     async def wmsa_play(self) -> bool:
         return await self.media_session_manager.get_current_session().try_play_async()
@@ -261,12 +259,40 @@ class MediaPlayerPlugin(PluginBase):
         return await self.media_session_manager.get_current_session().try_skip_previous_async()
 
     async def wmsa_stop(self) -> bool:
-        return await self.media_session_manager.get_current_session().try_stop_async()
+        ret_val = await self.media_session_manager.get_current_session().try_stop_async()
+        if ret_val:
+            ret_val = await self.media_session_manager.get_current_session().try_pause_async()
+        return ret_val
 
 
     # Functions
-    def set_wmsa_state(self, helper: PluginHelper, new_state: Any):
-        event = WMSAStateValueUpdatedEvent(new_state)
+    def set_wmsa_state(self, helper: PluginHelper, current_session: GlobalSystemMediaTransportControlsSession):
+        playback_info = current_session.get_playback_info()
+        media_properties = asyncio.run(self.wmsa_get_media_properties(current_session))
+        if media_properties is None:
+            return
+        state: dict[str, str|bool] = {
+            # 'album_artist': media_properties.album_artist,
+            # 'album_title': media_properties.album_title,
+            # 'album_track_count': media_properties.album_track_count,
+            'artist': media_properties.artist,
+            # 'genres': cast(list[str], media_properties.genres),
+            # 'playback_type': media_properties.playback_type, # Not available, despite typings
+            'subtitle': media_properties.subtitle,
+            # 'thumbnail': media_properties.thumbnail,
+            'title': media_properties.title,
+            # 'track_number': media_properties.track_number,
+            }
+        if hasattr(playback_info, 'is_shuffle_active'):
+            state['is_shuffle_active'] = playback_info.is_shuffle_active or False
+        if hasattr(playback_info, 'auto_repeat_mode'):
+            state['auto_repeat_mode'] = playback_info.auto_repeat_mode or False
+        if hasattr(playback_info, 'playback_status'):
+            state['playback_status'] = playback_info.playback_status.name
+            
+        log('info', 'Current state: ', state)
+        
+        event = WMSAStateValueUpdatedEvent(state)
         helper.put_incoming_event(event) # Updates the projected state
 
     def register_media_keys_actions(self, helper: PluginHelper):
