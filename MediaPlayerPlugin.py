@@ -59,8 +59,8 @@ class MediaPlayerPlugin(PluginBase):
     DEFAULT_PLAYBACK_METHOD: str = 'wmsa'
     session_changed_handler_registration_token: EventRegistrationToken | None
     
-    def __init__(self, plugin_name: str = "Media Player"): # This is the name that will be shown in the UI.
-        super().__init__(plugin_name)
+    def __init__(self): # This is the name that will be shown in the UI.
+        super().__init__(plugin_name = "Media Player", event_classes = [WMSAStateValueUpdatedEvent])
 
         self.media_session_manager = asyncio.run(self._initialize_media_session_manager())
 
@@ -290,8 +290,6 @@ class MediaPlayerPlugin(PluginBase):
             }
         }, lambda args, projected_states: self.pressMediaKey(args, projected_states, helper), 'global')
 
-        pass
-
     def register_wmsa_actions(self, helper: PluginHelper):
         # Register Windows Media Session API actions
         # Use https://pypi.org/project/pywmsa/
@@ -337,7 +335,6 @@ class MediaPlayerPlugin(PluginBase):
                 }
             }
         }, lambda args, projected_states: self.start_playlist(args, projected_states, media_playback_method, helper), 'global')
-        pass
 
     def start_playlist(self, args, projected_states, media_playback_method: str, helper: PluginHelper) -> str:
         if media_playback_method == "media_keys":
