@@ -5,6 +5,7 @@ import subprocess
 from typing import Any, Callable, Literal, TypedDict, cast, final, override
 import asyncio
 from openai.types.chat import ChatCompletionMessageParam
+from winrt.windows.foundation import EventRegistrationToken
 from winrt.windows.media.control import CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionManager as MediaManager, GlobalSystemMediaTransportControlsSessionMediaProperties
 
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
 class MediaPlayerPlugin(PluginBase):
     media_session_manager: MediaManager
     DEFAULT_PLAYBACK_METHOD: str = 'wmsa'
+    session_changed_handler_registration_token: EventRegistrationToken | None
     
     def __init__(self, plugin_name: str = "Media Player"): # This is the name that will be shown in the UI.
         super().__init__(plugin_name)
@@ -144,7 +146,7 @@ class MediaPlayerPlugin(PluginBase):
             pass
         elif media_playback_method == "wmsa":
             # Register Windows Media Session API projections
-            self.media_session_manager.add_current_session_changed(lambda session, eventArgs: self.session_changed_handler(helper, session, eventArgs))
+            self.session_changed_handler_registration_token = self.media_session_manager.add_current_session_changed(lambda session, eventArgs: self.session_changed_handler(helper, session, eventArgs))
             helper.register_projection(CurrentMediaPlaybackState())
         elif media_playback_method == "mpv":
             # Register MPV projections
@@ -171,6 +173,14 @@ class MediaPlayerPlugin(PluginBase):
     def register_prompt_generators(self, helper: PluginHelper):
         # Register prompt generators
         helper.register_prompt_generator(self.media_player_state_prompt_generator)
+        
+    
+    @override
+    def on_chat_stop(self, helper: PluginHelper):
+        # Executed when the chat is stopped
+        if self.session_changed_handler_registration_token is not None:
+            self.media_session_manager.remove_current_session_changed(self.session_changed_handler_registration_token)
+        log('debug', f"Executed on_chat_stop hook for {self.plugin_name}")
 
     # Actions
     def pressMediaKey(self, args, projected_states, helper: PluginHelper) -> str:
@@ -194,7 +204,7 @@ class MediaPlayerPlugin(PluginBase):
         log('info', 'Activating Windows Media Session API action: ', args)
         action: str | None = args['action']
         if action is None:
-            return "Erro: No action specified."
+            return "Error: No action specified."
 
         success: bool = False
         if action == "play":
