@@ -1,0 +1,5 @@
+__pycache__
+
+# Ignore all files in the playlists folder, except for the .gitkeep file.
+playlists/*
+!playlists/.gitkeep
