@@ -322,7 +322,10 @@ class MediaPlayerPlugin(PluginBase):
 
     def register_playlist_action(self, media_playback_method: str, helper: PluginHelper):
         # Register playlist action
-        playlist_names = list(map(lambda x: x[:-4], os.listdir('./plugins/MediaPlayer/playlists')))
+        # Find all playlist files
+        files = os.listdir('./plugins/MediaPlayer/playlists')
+        files = list(filter(lambda x: x.endswith('.m3u'), files))
+        playlist_names = list(map(lambda x: x[:-4], files))
         log('debug', f"Discovered playlist names: {playlist_names}")
 
         helper.register_action('start_playlist', "Start a music/media playlist by name", {
