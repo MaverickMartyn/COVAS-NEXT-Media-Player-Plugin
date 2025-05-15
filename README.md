@@ -19,7 +19,7 @@ Integrates the COVAS:NEXT AI assistant with your media player, allowing the assi
 Unpack the plugin into the `plugins` folder in COVAS, leading to the following folder structure:
 * `plugins`
     * `MediaPlayer`
-        * `MediaPlayer.py`
+        * `MediaPlayerPlugin.py`
         * `requirements.txt`
         * `playlists`
             * `Rock.m3u`
