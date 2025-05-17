@@ -1,6 +1,7 @@
 from ast import Dict
 import os
 import platform
+import random
 import subprocess
 from typing import Any, Callable, Literal, TypedDict, cast, final, override
 import asyncio
@@ -60,6 +61,7 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
 class MediaPlayerPlugin(PluginBase):
     media_session_manager: MediaManager
     DEFAULT_PLAYBACK_METHOD: str = 'wmsa'
+    DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
     current_session_changed_handler_registration_token: EventRegistrationToken | None = None
     playback_info_changed_handler_registration_token: EventRegistrationToken | None = None
     
@@ -96,7 +98,7 @@ class MediaPlayerPlugin(PluginBase):
                         type="select",
                         readonly = False,
                         placeholder = None,
-                        default_value = 'wmsa',
+                        default_value = self.DEFAULT_PLAYBACK_METHOD,
                         select_options= [
                             SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
                             SelectOption(key="wmsa", label="Windows Media Session API", value="wmsa", disabled=False),
@@ -106,6 +108,26 @@ class MediaPlayerPlugin(PluginBase):
                             SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
                         ],
                         multi_select=False,
+                    ),
+                    ParagraphSetting(
+                        key="media_change_assistant_comments_description",
+                        label="Assistant Comments (Only available for Windows Media Session API)",
+                        type="paragraph",
+                        readonly = False,
+                        placeholder = None,
+                        content="When the media playback changes the assistant may comment, based on the chance set below (in percent).<br />" +
+                                "Default is 10%. Set to 0 to disable."
+                    ),
+                    NumericalSetting(
+                        key="media_change_assistant_comments_chance",
+                        label="Assistant Comments Chance (In percent)",
+                        type="number",
+                        readonly = False,
+                        placeholder = None,
+                        default_value = self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE,
+                        min_value = 0,
+                        max_value = 100,
+                        step = 1
                     ),
                 ]
             ),
@@ -182,13 +204,16 @@ class MediaPlayerPlugin(PluginBase):
         # Register prompt generators
         helper.register_status_generator(self.media_player_state_status_generator)
         
-    
     @override
     def on_chat_stop(self, helper: PluginHelper):
         # Executed when the chat is stopped
         if self.current_session_changed_handler_registration_token is not None:
             self.media_session_manager.remove_current_session_changed(self.current_session_changed_handler_registration_token)
         log('debug', f"Executed on_chat_stop hook for {self.plugin_name}")
+
+    @override
+    def register_should_reply_handlers(self, helper: PluginHelper):
+        helper.register_should_reply_handler(lambda event, projected_states: self.media_player_should_reply_handler(helper, event, projected_states))
 
     # Actions
     def pressMediaKey(self, args, projected_states, helper: PluginHelper) -> str:
@@ -424,4 +449,15 @@ class MediaPlayerPlugin(PluginBase):
         return [
             ('Current media player state', projected_states['CurrentMediaPlayerState']['state'])
         ]
+
+    def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
+        if isinstance(event, WMSAStateValueUpdatedEvent):
+            # Decide based on chance set in media_change_assistant_comments_chance setting.
+            chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
+            if chance == 0:
+                return False
+            if (random.random() * 100) < chance:
+                return True
+            return False
+        return None # No opinion. Let the AI decide.
         
