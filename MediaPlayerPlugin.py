@@ -43,7 +43,10 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
             'media_playback_state': {
                 'artist': None,
                 'subtitle': None,
-                'title': None
+                'title': None,
+                'is_shuffle_active': False,
+                'auto_repeat_mode': False,
+                'playback_status': 'STOPPED'
             }
         }  # type: ignore
 
@@ -169,11 +172,15 @@ class MediaPlayerPlugin(PluginBase):
     @override
     def register_sideeffects(self, helper: PluginHelper):
         pass # Unused for now
+
+    @override
+    def register_prompt_event_handlers(self, helper: PluginHelper):
+        pass # Unused for now
         
     @override
-    def register_prompt_generators(self, helper: PluginHelper):
+    def register_status_generators(self, helper: PluginHelper):
         # Register prompt generators
-        helper.register_prompt_generator(self.media_player_state_prompt_generator)
+        helper.register_status_generator(self.media_player_state_status_generator)
         
     
     @override
@@ -413,13 +420,8 @@ class MediaPlayerPlugin(PluginBase):
     async def _initialize_media_session_manager(self):
         return await MediaManager.request_async()
 
-    def media_player_state_prompt_generator(self, event: Event) -> list[ChatCompletionMessageParam]:
-        if isinstance(event, WMSAStateValueUpdatedEvent):
-            return [
-                {
-                    "role": "system",
-                    "content": f'Current media playback state is now {event.new_state}.',
-                }
-            ]
-        return []
+    def media_player_state_status_generator(self, projected_states: dict[str, dict]) -> list[tuple[str, Any]]:
+        return [
+            ('Current media player state', projected_states['CurrentMediaPlayerState']['state'])
+        ]
         
