@@ -1,5 +1,8 @@
 __pycache__
+# dist is the output directory for the packaged plugin.
 dist/*
+# deps contains Python dependencies
+deps/*
 
 # Ignore all files in the playlists folder, except for the .gitkeep file.
 playlists/*

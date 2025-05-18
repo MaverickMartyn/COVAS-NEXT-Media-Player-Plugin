@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from lib.Config import Config
-from lib.PluginHelper import PluginHelper
+from lib.PluginHelper import PluginHelper, PluginManifest
 from lib.PluginSettingDefinitions import PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
 from lib.ScreenReader import ScreenReader
 from lib.Logger import log
@@ -65,8 +65,8 @@ class MediaPlayerPlugin(PluginBase):
     current_session_changed_handler_registration_token: EventRegistrationToken | None = None
     playback_info_changed_handler_registration_token: EventRegistrationToken | None = None
     
-    def __init__(self): # This is the name that will be shown in the UI.
-        super().__init__(plugin_name = "Media Player", event_classes = [WMSAStateValueUpdatedEvent])
+    def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
+        super().__init__(plugin_manifest, event_classes = [WMSAStateValueUpdatedEvent])
 
         self.media_session_manager = asyncio.run(self._initialize_media_session_manager())
 
@@ -160,7 +160,7 @@ class MediaPlayerPlugin(PluginBase):
             
         self.register_playlist_action(media_playback_method, helper)
 
-        log('debug', f"Actions registered for {self.plugin_name}")
+        log('debug', f"Actions registered for {self.plugin_manifest.name}")
         
     @override
     def register_projections(self, helper: PluginHelper):
@@ -189,7 +189,7 @@ class MediaPlayerPlugin(PluginBase):
             
         self.register_playlist_action(media_playback_method, helper)
 
-        log('debug', f"Projections registered for {self.plugin_name}")
+        log('debug', f"Projections registered for {self.plugin_manifest.name}")
 
     @override
     def register_sideeffects(self, helper: PluginHelper):
@@ -209,7 +209,7 @@ class MediaPlayerPlugin(PluginBase):
         # Executed when the chat is stopped
         if self.current_session_changed_handler_registration_token is not None:
             self.media_session_manager.remove_current_session_changed(self.current_session_changed_handler_registration_token)
-        log('debug', f"Executed on_chat_stop hook for {self.plugin_name}")
+        log('debug', f"Executed on_chat_stop hook for {self.plugin_manifest.name}")
 
     @override
     def register_should_reply_handlers(self, helper: PluginHelper):
@@ -381,6 +381,8 @@ class MediaPlayerPlugin(PluginBase):
     def register_playlist_action(self, media_playback_method: str, helper: PluginHelper):
         # Register playlist action
         # Find all playlist files
+        if not os.path.exists('./plugins/MediaPlayer/playlists'):
+            os.makedirs('./plugins/MediaPlayer/playlists')
         files = os.listdir('./plugins/MediaPlayer/playlists')
         files = list(filter(lambda x: x.endswith('.m3u'), files))
         playlist_names = list(map(lambda x: x[:-4], files))

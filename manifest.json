@@ -1,0 +1,8 @@
+{
+    "guid": "e24520af-5b71-456e-85f4-68140b18aee6",
+    "name": "Media Player Plugin",
+    "version": "0.0.1",
+    "author": "MaverickMartyn",
+    "description": "Adds media player capabilities to COVAS:NEXT, including support for media keys, Windows Media Session API, and various media players.",
+    "entrypoint": "MediaPlayerPlugin.py"
+}
