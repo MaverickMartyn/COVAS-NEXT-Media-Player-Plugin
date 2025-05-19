@@ -24,14 +24,22 @@ from lib.PluginBase import PluginBase
 from lib.SystemDatabase import SystemDatabase
 from lib.Event import Event, StatusEvent
 
+class MediaPlaybackStateInner(TypedDict):
+    artist: str | None
+    subtitle: str | None
+    title: str | None
+    is_shuffle_active: bool | None
+    auto_repeat_mode: bool | None
+    playback_status: str | None
+
 class MediaPlaybackState(TypedDict):
     event: str
-    media_playback_state: Any
+    media_playback_state: MediaPlaybackStateInner
 
 @dataclass
 @final
-class WMSAStateValueUpdatedEvent(Event):
-    new_state: Any
+class MediaPlaybackStateValueUpdatedEvent(Event):
+    new_state: MediaPlaybackStateInner
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     kind: Literal['game', 'user', 'assistant', 'assistant_completed', 'tool', 'status', 'projected', 'external', 'archive'] = field(default='status')
     processed_at: float = field(default=0.0)
@@ -39,34 +47,34 @@ class WMSAStateValueUpdatedEvent(Event):
 class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
     @override
     def get_default_state(self) -> MediaPlaybackState:
-        return {
+        return MediaPlaybackState({
             'event': 'MediaState',
-            'media_playback_state': {
+            'media_playback_state': MediaPlaybackStateInner({
                 'artist': None,
                 'subtitle': None,
                 'title': None,
                 'is_shuffle_active': False,
                 'auto_repeat_mode': False,
-                'playback_status': 'STOPPED'
-            }
-        }  # type: ignore
+                'playback_status': None
+            })
+        })
 
     @override
     def process(self, event: Event) -> None:
-        if isinstance(event, WMSAStateValueUpdatedEvent):
+        if isinstance(event, MediaPlaybackStateValueUpdatedEvent):
             self.state['media_playback_state'] = event.new_state
 
 # Main plugin class
 # This is the class that will be loaded by the PluginManager.
 class MediaPlayerPlugin(PluginBase):
     media_session_manager: MediaManager
-    DEFAULT_PLAYBACK_METHOD: str = 'wmsa'
+    DEFAULT_PLAYBACK_METHOD: str = 'wmsa' # TODO_ Default to media keys on non-windows platforms
     DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
     current_session_changed_handler_registration_token: EventRegistrationToken | None = None
     playback_info_changed_handler_registration_token: EventRegistrationToken | None = None
     
     def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
-        super().__init__(plugin_manifest, event_classes = [WMSAStateValueUpdatedEvent])
+        super().__init__(plugin_manifest, event_classes = [MediaPlaybackStateValueUpdatedEvent])
 
         self.media_session_manager = asyncio.run(self._initialize_media_session_manager())
 
@@ -303,18 +311,14 @@ class MediaPlayerPlugin(PluginBase):
         media_properties = asyncio.run(self.wmsa_get_media_properties(current_session))
         if media_properties is None:
             return
-        state: dict[str, str|bool] = {
-            # 'album_artist': media_properties.album_artist,
-            # 'album_title': media_properties.album_title,
-            # 'album_track_count': media_properties.album_track_count,
+        state = MediaPlaybackStateInner({
             'artist': media_properties.artist,
-            # 'genres': cast(list[str], media_properties.genres),
-            # 'playback_type': media_properties.playback_type, # Not available, despite typings
             'subtitle': media_properties.subtitle,
-            # 'thumbnail': media_properties.thumbnail,
             'title': media_properties.title,
-            # 'track_number': media_properties.track_number,
-            }
+            'is_shuffle_active': False,
+            'auto_repeat_mode': False,
+            'playback_status': None
+            })
         if hasattr(playback_info, 'is_shuffle_active'):
             state['is_shuffle_active'] = playback_info.is_shuffle_active or False
         if hasattr(playback_info, 'auto_repeat_mode'):
@@ -324,7 +328,7 @@ class MediaPlayerPlugin(PluginBase):
             
         log('info', 'Current state: ', state)
         
-        event = WMSAStateValueUpdatedEvent(state)
+        event = MediaPlaybackStateValueUpdatedEvent(state)
         helper.put_incoming_event(event) # Updates the projected state
 
     def register_media_keys_actions(self, helper: PluginHelper):
@@ -453,7 +457,7 @@ class MediaPlayerPlugin(PluginBase):
         ]
 
     def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
-        if isinstance(event, WMSAStateValueUpdatedEvent):
+        if isinstance(event, MediaPlaybackStateValueUpdatedEvent):
             # Decide based on chance set in media_change_assistant_comments_chance setting.
             chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
             if chance == 0:
