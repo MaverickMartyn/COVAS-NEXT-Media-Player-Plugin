@@ -25,13 +25,18 @@ Unpack the plugin into the `plugins` folder in COVAS, leading to the following f
             * `Rock.m3u`
     * `OtherPlugin`
 
-Install the dependencies using `pip`, by running this command in the ´MediaPluigin` folder:
+# Development
+During development, clone the COVAS:NEXT repository and place your plugin-project in the plugins folder.  
+Install the dependencies to your local .venv virtual environment using `pip`, by running this command in the `MediaPlayer` folder:
 ```bash
   pip install -r requirements.txt
 ```
+
+# Packaging
+Use the `./pack.ps1` script to package the plugin and any Python dependencies in the `deps` folder.
     
 ## Acknowledgements
 
  - [COVAS:NEXT](https://github.com/RatherRude/Elite-Dangerous-AI-Integration)
- - [My other projects](https://github.com/maverickMartyn)
+ - [My other projects](https://github.com/MaverickMartyn)
 
