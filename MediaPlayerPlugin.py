@@ -81,66 +81,66 @@ class MediaPlayerPlugin(PluginBase):
         # Define the plugin settings
         # This is the settings that will be shown in the UI for this plugin.
         self.settings_config: PluginSettings | None = PluginSettings(
-        key="MediaPlayerPlugin",
-        label="Media Player Plugin",
-        icon="music_note", # Uses Material Icons, like the built-in settings-tabs.
-        grids=[
-            SettingsGrid(
-                key="general",
-                label="General",
-                fields=[
-                    ParagraphSetting(
-                        key="media_playback_method_description",
-                        label="Media Playback Method",
-                        type="paragraph",
-                        readonly = False,
-                        placeholder = None,
-                        content="Select the media playback method you want to use. The default is Windows Media Session API, which is the most compatible with most media players.<br />"
-                                + "Deeper integration with other media players are available.<br />"
-                                + "If you want to use the media keys, select Media Keys. This will work with almost anything.<br />"
-                                + "Note: Changing this setting will require restarting the assistant."
-                    ),
-                    SelectSetting(
-                        key="media_playback_method",
-                        label="Media Playback Method",
-                        type="select",
-                        readonly = False,
-                        placeholder = None,
-                        default_value = self.DEFAULT_PLAYBACK_METHOD,
-                        select_options= [
-                            SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
-                            SelectOption(key="wmsa", label="Windows Media Session API", value="wmsa", disabled=False),
-                            SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
-                            SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
-                            SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
-                            SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
-                        ],
-                        multi_select=False,
-                    ),
-                    ParagraphSetting(
-                        key="media_change_assistant_comments_description",
-                        label="Assistant Comments (Only available for Windows Media Session API)",
-                        type="paragraph",
-                        readonly = False,
-                        placeholder = None,
-                        content="When the media playback changes the assistant may comment, based on the chance set below (in percent).<br />" +
-                                "Default is 10%. Set to 0 to disable."
-                    ),
-                    NumericalSetting(
-                        key="media_change_assistant_comments_chance",
-                        label="Assistant Comments Chance (In percent)",
-                        type="number",
-                        readonly = False,
-                        placeholder = None,
-                        default_value = self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE,
-                        min_value = 0,
-                        max_value = 100,
-                        step = 1
-                    ),
-                ]
-            ),
-        ]
-    )
+            key="MediaPlayerPlugin",
+            label="Media Player Plugin",
+            icon="music_note", # Uses Material Icons, like the built-in settings-tabs.
+            grids=[
+                SettingsGrid(
+                    key="general",
+                    label="General",
+                    fields=[
+                        ParagraphSetting(
+                            key="media_playback_method_description",
+                            label="Media Playback Method",
+                            type="paragraph",
+                            readonly = False,
+                            placeholder = None,
+                            content="Select the media playback method you want to use. The default is Windows Media Session API, which is the most compatible with most media players.<br />"
+                                    + "Deeper integration with other media players are available.<br />"
+                                    + "If you want to use the media keys, select Media Keys. This will work with almost anything.<br />"
+                                    + "Note: Changing this setting will require restarting the assistant."
+                        ),
+                        SelectSetting(
+                            key="media_playback_method",
+                            label="Media Playback Method",
+                            type="select",
+                            readonly = False,
+                            placeholder = None,
+                            default_value = self.DEFAULT_PLAYBACK_METHOD,
+                            select_options= [
+                                SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
+                                SelectOption(key="wmsa", label="Windows Media Session API", value="wmsa", disabled=False),
+                                SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
+                                SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
+                                SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
+                                SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
+                            ],
+                            multi_select=False,
+                        ),
+                        ParagraphSetting(
+                            key="media_change_assistant_comments_description",
+                            label="Assistant Comments (Only available for Windows Media Session API)",
+                            type="paragraph",
+                            readonly = False,
+                            placeholder = None,
+                            content="When the media playback changes the assistant may comment, based on the chance set below (in percent).<br />" +
+                                    "Default is 10%. Set to 0 to disable."
+                        ),
+                        NumericalSetting(
+                            key="media_change_assistant_comments_chance",
+                            label="Assistant Comments Chance (In percent)",
+                            type="number",
+                            readonly = False,
+                            placeholder = None,
+                            default_value = self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE,
+                            min_value = 0,
+                            max_value = 100,
+                            step = 1
+                        ),
+                    ]
+                ),
+            ]
+        )
     
     @override
     def register_actions(self, helper: PluginHelper):
