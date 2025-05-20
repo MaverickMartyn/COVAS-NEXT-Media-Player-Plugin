@@ -453,7 +453,7 @@ class MediaPlayerPlugin(PluginBase):
 
     def media_player_state_status_generator(self, projected_states: dict[str, dict]) -> list[tuple[str, Any]]:
         return [
-            ('Current media player state', projected_states['CurrentMediaPlayerState']['state'])
+            ('Current media player state', projected_states.get('CurrentMediaPlayerState', {}).get('state', {}))
         ]
 
     def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
