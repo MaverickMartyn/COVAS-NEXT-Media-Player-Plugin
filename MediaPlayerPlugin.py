@@ -201,16 +201,20 @@ class MediaPlayerPlugin(PluginBase):
 
     @override
     def register_sideeffects(self, helper: PluginHelper):
-        pass # Unused for now
+        pass
 
     @override
     def register_prompt_event_handlers(self, helper: PluginHelper):
-        pass # Unused for now
+        pass
         
     @override
     def register_status_generators(self, helper: PluginHelper):
         # Register prompt generators
         helper.register_status_generator(self.media_player_state_status_generator)
+    
+    @override
+    def on_plugin_helper_ready(self, helper: PluginHelper):
+        pass
         
     @override
     def on_chat_stop(self, helper: PluginHelper):
@@ -385,9 +389,11 @@ class MediaPlayerPlugin(PluginBase):
     def register_playlist_action(self, media_playback_method: str, helper: PluginHelper):
         # Register playlist action
         # Find all playlist files
-        if not os.path.exists('./plugins/MediaPlayer/playlists'):
-            os.makedirs('./plugins/MediaPlayer/playlists')
-        files = os.listdir('./plugins/MediaPlayer/playlists')
+        playlists_path = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), './playlists')
+        if not os.path.exists(playlists_path):
+            os.makedirs(playlists_path)
+
+        files = os.listdir(playlists_path)
         files = list(filter(lambda x: x.endswith('.m3u'), files))
         playlist_names = list(map(lambda x: x[:-4], files))
         log('debug', f"Discovered playlist names: {playlist_names}")
@@ -426,7 +432,7 @@ class MediaPlayerPlugin(PluginBase):
         # Temporary catch-all.
         # TODO: Expand this to support other media players
         log('info', f"Current directory: {os.getcwd()}")
-        playlist_path: str = os.path.join(os.getcwd(), 'plugins', 'MediaPlayer', 'playlists', f'{args["playlist"]}.m3u')
+        playlist_path: str = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists', f'{args["playlist"]}.m3u')
         log('info', f"Playlist path: {playlist_path}")
         log('info', f'Playlist file exists: {os.path.exists(playlist_path)}')
         if platform.system() == 'Darwin':       # macOS
