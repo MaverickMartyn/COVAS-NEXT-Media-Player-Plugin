@@ -14,7 +14,7 @@ if [ -f "requirements.txt" ]; then
 fi
 
 # Remember to add any additional files, and change the name of the plugin
-artifacts=("MediaPlayerPlugin.py" "requirements.txt", "README.md" "manifest.json")
+artifacts=("MediaPlayerPlugin.py" "requirements.txt", "README.md" "manifest.json", "__init__.py")
 
 if [ -d "deps" ]; then
     artifacts+=("deps")

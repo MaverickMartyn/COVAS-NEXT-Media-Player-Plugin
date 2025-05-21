@@ -21,8 +21,9 @@ Unpack the plugin into the `plugins` folder in COVAS, leading to the following f
     * `MediaPlayer`
         * `MediaPlayerPlugin.py`
         * `requirements.txt`
-        * `playlists`
-            * `Rock.m3u`
+        * `deps`
+        * `__init__.py`
+        * etc.
     * `OtherPlugin`
 
 # Development
@@ -33,7 +34,7 @@ Install the dependencies to your local .venv virtual environment using `pip`, by
 ```
 
 # Packaging
-Use the `./pack.ps1` script to package the plugin and any Python dependencies in the `deps` folder.
+Use the `./pack.ps1` or `./pack.sh` scripts to package the plugin and any Python dependencies in the `deps` folder.
     
 ## Acknowledgements
 

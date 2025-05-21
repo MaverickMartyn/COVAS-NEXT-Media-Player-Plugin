@@ -1,28 +1,20 @@
-from ast import Dict
 import os
 import platform
 import random
 import subprocess
 from typing import Any, Callable, Literal, TypedDict, cast, final, override
 import asyncio
-from openai.types.chat import ChatCompletionMessageParam
 from winrt.windows.foundation import EventRegistrationToken
 from winrt.windows.media.control import CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager as MediaManager, GlobalSystemMediaTransportControlsSessionMediaProperties, PlaybackInfoChangedEventArgs
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from lib.Config import Config
 from lib.PluginHelper import PluginHelper, PluginManifest
 from lib.PluginSettingDefinitions import PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
-from lib.ScreenReader import ScreenReader
 from lib.Logger import log
-from lib.EDKeys import EDKeys
-from lib.EventManager import EventManager, Projection
-from lib.ActionManager import ActionManager
 from lib.PluginBase import PluginBase
-from lib.SystemDatabase import SystemDatabase
-from lib.Event import Event, StatusEvent
+from lib.Event import Event
 
 class MediaPlaybackStateInner(TypedDict):
     artist: str | None
