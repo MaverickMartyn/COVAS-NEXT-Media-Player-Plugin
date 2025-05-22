@@ -16,6 +16,7 @@ Integrates the COVAS:NEXT AI assistant with your media player, allowing the assi
 
 ## Installation
 
+Download the latest release under the *Releases* section on the right.  
 Unpack the plugin into the `plugins` folder in COVAS, leading to the following folder structure:
 * `plugins`
     * `MediaPlayer`
