@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from lib.PluginHelper import PluginHelper, PluginManifest
 from lib.PluginSettingDefinitions import PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
 from lib.Logger import log
+from lib.EventManager import Projection
 from lib.PluginBase import PluginBase
 from lib.Event import Event
 
