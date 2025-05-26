@@ -3,73 +3,59 @@ import platform
 import random
 import subprocess
 from typing import Any, Callable, Literal, TypedDict, cast, final, override
-import asyncio
-from winrt.windows.foundation import EventRegistrationToken
-from winrt.windows.media.control import CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager as MediaManager, GlobalSystemMediaTransportControlsSessionMediaProperties, PlaybackInfoChangedEventArgs
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+
+from openai.types.chat import ChatCompletionMessageParam
 
 from lib.PluginHelper import PluginHelper, PluginManifest
 from lib.PluginSettingDefinitions import PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
 from lib.Logger import log
 from lib.EventManager import Projection
 from lib.PluginBase import PluginBase
-from lib.Event import Event
-
-class MediaPlaybackStateInner(TypedDict):
-    artist: str | None
-    subtitle: str | None
-    title: str | None
-    is_shuffle_active: bool | None
-    auto_repeat_mode: bool | None
-    playback_status: str | None
-
-class MediaPlaybackState(TypedDict):
-    event: str
-    media_playback_state: MediaPlaybackStateInner
+from lib.Event import Event, ProjectedEvent
+from .MediaControllers import MPRISController, MacOSMediaController, MediaController, MediaPlaybackStateInner, WindowsMediaController, default_media_playback_state, get_platform_controller
 
 @dataclass
 @final
-class MediaPlaybackStateValueUpdatedEvent(Event):
+class MediaPlaybackStateChangedEvent(Event):
     new_state: MediaPlaybackStateInner
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    kind: Literal['game', 'user', 'assistant', 'assistant_completed', 'tool', 'status', 'projected', 'external', 'archive'] = field(default='status')
+    kind: Literal['game', 'user', 'assistant', 'assistant_completed', 'tool', 'status', 'projected', 'external', 'archive'] = field(default='tool')
     processed_at: float = field(default=0.0)
+    processed_by_us_at: float = field(default=0.0)
+    
+class MediaPlaybackState(TypedDict):
+    event: str
+    media_playback_state: MediaPlaybackStateInner
 
 class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
     @override
     def get_default_state(self) -> MediaPlaybackState:
         return MediaPlaybackState({
             'event': 'MediaState',
-            'media_playback_state': MediaPlaybackStateInner({
-                'artist': None,
-                'subtitle': None,
-                'title': None,
-                'is_shuffle_active': False,
-                'auto_repeat_mode': False,
-                'playback_status': None
-            })
+            'media_playback_state': default_media_playback_state()
         })
 
     @override
-    def process(self, event: Event) -> None:
-        if isinstance(event, MediaPlaybackStateValueUpdatedEvent):
+    def process(self, event: Event) -> list[ProjectedEvent]:
+        projected_events: list[ProjectedEvent] = []
+        if isinstance(event, MediaPlaybackStateChangedEvent):
             self.state['media_playback_state'] = event.new_state
+            projected_events.append(ProjectedEvent({"event": "MediaPlaybackStateChanged", "new_state": event.new_state}))
+        return projected_events
 
 # Main plugin class
 # This is the class that will be loaded by the PluginManager.
 class MediaPlayerPlugin(PluginBase):
-    media_session_manager: MediaManager
-    DEFAULT_PLAYBACK_METHOD: str = 'wmsa' # TODO_ Default to media keys on non-windows platforms
+    DEFAULT_PLAYBACK_METHOD: str = 'system_wide'
     DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
-    current_session_changed_handler_registration_token: EventRegistrationToken | None = None
-    playback_info_changed_handler_registration_token: EventRegistrationToken | None = None
     
     def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
-        super().__init__(plugin_manifest, event_classes = [MediaPlaybackStateValueUpdatedEvent])
+        super().__init__(plugin_manifest, event_classes = [MediaPlaybackStateChangedEvent])
 
-        self.media_session_manager = asyncio.run(self._initialize_media_session_manager())
+        self._media_controller: MPRISController | WindowsMediaController | MacOSMediaController | None = None
 
         # Define the plugin settings
         # This is the settings that will be shown in the UI for this plugin.
@@ -88,9 +74,10 @@ class MediaPlayerPlugin(PluginBase):
                             type="paragraph",
                             readonly = False,
                             placeholder = None,
-                            content="Select the media playback method you want to use. The default is Windows Media Session API, which is the most compatible with most media players.<br />"
+                            content="Select the media playback method you want to use. The default is the Generic System-Wide Integration, which is the most compatible with most media players.<br />"
+                                    + "The system-wide integration uses native APIs, depending on the platform, to query emdia information and control playback.<br />"
                                     + "Deeper integration with other media players are available.<br />"
-                                    + "If you want to use the media keys, select Media Keys. This will work with almost anything.<br />"
+                                    + "If you want to use the media keys, select Media Keys. This will work with almost anything, but provides no media meta data.<br />"
                                     + "Note: Changing this setting will require restarting the assistant."
                         ),
                         SelectSetting(
@@ -102,7 +89,7 @@ class MediaPlayerPlugin(PluginBase):
                             default_value = self.DEFAULT_PLAYBACK_METHOD,
                             select_options= [
                                 SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
-                                SelectOption(key="wmsa", label="Windows Media Session API", value="wmsa", disabled=False),
+                                SelectOption(key="system_wide", label="Generic System-Wide Integration", value="system_wide", disabled=False),
                                 SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
                                 SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
                                 SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
@@ -112,7 +99,7 @@ class MediaPlayerPlugin(PluginBase):
                         ),
                         ParagraphSetting(
                             key="media_change_assistant_comments_description",
-                            label="Assistant Comments (Only available for Windows Media Session API)",
+                            label="Assistant Comments (Only available for Generic System-Wide Integration)",
                             type="paragraph",
                             readonly = False,
                             placeholder = None,
@@ -138,14 +125,14 @@ class MediaPlayerPlugin(PluginBase):
     @override
     def register_actions(self, helper: PluginHelper):
         # Register actions
-        media_playback_method: str = cast(str, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
+        media_playback_method = self._get_media_playback_method(helper)
 
         if media_playback_method == "media_keys":
             # Register media keys actions
             self.register_media_keys_actions(helper)
-        elif media_playback_method == "wmsa":
-            # Register Windows Media Session API actions
-            self.register_wmsa_actions(helper)
+        elif media_playback_method == "system_wide":
+            # Register actions for the generic system-wide integration
+            self.register_system_wide_media_actions(helper)
         elif media_playback_method == "mpv":
             # Register MPV actions
             self.register_mpv_actions(helper)
@@ -166,14 +153,13 @@ class MediaPlayerPlugin(PluginBase):
     @override
     def register_projections(self, helper: PluginHelper):
         # Register projections
-        media_playback_method: str = cast(str, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
+        media_playback_method = self._get_media_playback_method(helper)
 
         if media_playback_method == "media_keys":
             # Register media keys projections
             pass
-        elif media_playback_method == "wmsa":
-            # Register Windows Media Session API projections
-            self.current_session_changed_handler_registration_token = self.media_session_manager.add_current_session_changed(lambda session, eventArgs: self.current_session_changed_handler(helper, session, eventArgs))
+        elif media_playback_method == "system_wide":
+            # Register the generic media meta data projection
             helper.register_projection(CurrentMediaPlaybackState())
         elif media_playback_method == "mpv":
             # Register MPV projections
@@ -198,31 +184,37 @@ class MediaPlayerPlugin(PluginBase):
 
     @override
     def register_prompt_event_handlers(self, helper: PluginHelper):
-        pass
+        pass # helper.register_prompt_event_handler(lambda event: self.new_media_event_prompt_handler(event, helper)),
         
     @override
     def register_status_generators(self, helper: PluginHelper):
         # Register prompt generators
-        helper.register_status_generator(self.media_player_state_status_generator)
+        helper.register_status_generator(lambda projected_states: self.media_player_state_status_generator(helper, projected_states))
     
     @override
     def on_plugin_helper_ready(self, helper: PluginHelper):
-        pass
+        if self._get_media_playback_method(helper) == "system_wide":
+            self._media_controller = get_platform_controller()
+            self._media_controller_on_media_playback_info_changed_handler(helper, self._media_controller.get_media_playback_state())
+            self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
         
     @override
     def on_chat_stop(self, helper: PluginHelper):
         # Executed when the chat is stopped
-        if self.current_session_changed_handler_registration_token is not None:
-            self.media_session_manager.remove_current_session_changed(self.current_session_changed_handler_registration_token)
+        if self._get_media_playback_method(helper) == "system_wide":
+            if self._media_controller is not None:
+                self._media_controller.cleanup()  # Cleanup the media controller
+                self._media_controller = None  # Reset the media controller
         log('debug', f"Executed on_chat_stop hook for {self.plugin_manifest.name}")
 
     @override
     def register_should_reply_handlers(self, helper: PluginHelper):
-        helper.register_should_reply_handler(lambda event, projected_states: self.media_player_should_reply_handler(helper, event, projected_states))
+        if self._get_media_playback_method(helper) == "system_wide":
+            helper.register_should_reply_handler(lambda event, projected_states: self.media_player_should_reply_handler(helper, event, projected_states))
 
     # Actions
     def pressMediaKey(self, args, projected_states, helper: PluginHelper) -> str:
-        log('info', 'pressing media key: ', args)
+        log('debug', 'pressing media key: ', args)
         key: str | None = args['key']
         if key is None:
             return "Error: No key specified."
@@ -238,23 +230,26 @@ class MediaPlayerPlugin(PluginBase):
             return "Error: Invalid key specified."
             
         return "Pressed media key: " + key
-    def wmsa_action(self, args, projected_states, helper: PluginHelper) -> str:
-        log('info', 'Activating Windows Media Session API action: ', args)
+    def system_wide_media_action(self, args, projected_states, helper: PluginHelper) -> str:
+        log('debug', 'Activating Generic Media API action: ', args)
         action: str | None = args['action']
         if action is None:
             return "Error: No action specified."
 
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using generic media integration. This should not happen."
+
         success: bool = False
         if action == "play":
-            success = asyncio.run(self.wmsa_play())
+            success = self._media_controller.play()
         elif action == "pause":
-            success = asyncio.run(self.wmsa_pause())
+            success = self._media_controller.pause()
         elif action == "next":
-            success = asyncio.run(self.wmsa_skip_next())
+            success = self._media_controller.next_track()
         elif action == "previous":
-            success = asyncio.run(self.wmsa_skip_previous())
+            success = self._media_controller.prev_track()
         elif action == "stop":
-            success = asyncio.run(self.wmsa_stop())
+            success = self._media_controller.stop()
         else:
             return "Error: Invalid action specified."
 
@@ -262,71 +257,6 @@ class MediaPlayerPlugin(PluginBase):
             return "Error: Failed to activate Windows Media Session API action: " + action
             
         return "Activated Windows Media Session API action: " + action
-
-    def current_session_changed_handler(self, helper: PluginHelper, session: MediaManager, eventArgs: CurrentSessionChangedEventArgs):
-        current_session = session.get_current_session()
-        if self.playback_info_changed_handler_registration_token is not None:
-            for running_session in session.get_sessions():
-                running_session.remove_playback_info_changed(self.playback_info_changed_handler_registration_token)
-        self.playback_info_changed_handler_registration_token = current_session.add_playback_info_changed(lambda session, eventArgs: self.playback_info_changed_handler(helper, session, eventArgs))
-
-        log('info', 'Session changed: ', session)
-        self.set_wmsa_state(helper, current_session)
-
-    def playback_info_changed_handler(self, helper: PluginHelper, session: GlobalSystemMediaTransportControlsSession, eventArgs: PlaybackInfoChangedEventArgs):
-        log('info', 'Playback info changed: ', session)
-        self.set_wmsa_state(helper, session)
-
-    async def wmsa_get_media_properties(self, session: GlobalSystemMediaTransportControlsSession) -> GlobalSystemMediaTransportControlsSessionMediaProperties | None:
-        # log('debug', 'MediaManager: ', session)
-        # curr_session = session.get_current_session()
-        # log('debug', 'Current session: ', curr_session)
-        return await session.try_get_media_properties_async()
-
-    async def wmsa_play(self) -> bool:
-        return await self.media_session_manager.get_current_session().try_play_async()
-
-    async def wmsa_pause(self) -> bool:
-        return await self.media_session_manager.get_current_session().try_pause_async()
-
-    async def wmsa_skip_next(self) -> bool:
-        return await self.media_session_manager.get_current_session().try_skip_next_async()
-
-    async def wmsa_skip_previous(self) -> bool:
-        return await self.media_session_manager.get_current_session().try_skip_previous_async()
-
-    async def wmsa_stop(self) -> bool:
-        ret_val = await self.media_session_manager.get_current_session().try_stop_async()
-        if ret_val:
-            ret_val = await self.media_session_manager.get_current_session().try_pause_async()
-        return ret_val
-
-
-    # Functions
-    def set_wmsa_state(self, helper: PluginHelper, current_session: GlobalSystemMediaTransportControlsSession):
-        playback_info = current_session.get_playback_info()
-        media_properties = asyncio.run(self.wmsa_get_media_properties(current_session))
-        if media_properties is None:
-            return
-        state = MediaPlaybackStateInner({
-            'artist': media_properties.artist,
-            'subtitle': media_properties.subtitle,
-            'title': media_properties.title,
-            'is_shuffle_active': False,
-            'auto_repeat_mode': False,
-            'playback_status': None
-            })
-        if hasattr(playback_info, 'is_shuffle_active'):
-            state['is_shuffle_active'] = playback_info.is_shuffle_active or False
-        if hasattr(playback_info, 'auto_repeat_mode'):
-            state['auto_repeat_mode'] = playback_info.auto_repeat_mode or False
-        if hasattr(playback_info, 'playback_status'):
-            state['playback_status'] = playback_info.playback_status.name
-            
-        log('info', 'Current state: ', state)
-        
-        event = MediaPlaybackStateValueUpdatedEvent(state)
-        helper.put_incoming_event(event) # Updates the projected state
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings
@@ -349,9 +279,8 @@ class MediaPlayerPlugin(PluginBase):
             }
         }, lambda args, projected_states: self.pressMediaKey(args, projected_states, helper), 'global')
 
-    def register_wmsa_actions(self, helper: PluginHelper):
-        # Register Windows Media Session API actions
-        # Use https://pypi.org/project/pywmsa/
+    def register_system_wide_media_actions(self, helper: PluginHelper):
+        # Register system-wide media actions
 
         helper.register_action('media_player_action', "Media/Music control. Play/pause/next/previous/stop", {
             "type": "object",
@@ -362,7 +291,7 @@ class MediaPlayerPlugin(PluginBase):
                     "description": "The media player function."
                 }
             }
-        }, lambda args, projected_states: self.wmsa_action(args, projected_states, helper), 'global')
+        }, lambda args, projected_states: self.system_wide_media_action(args, projected_states, helper), 'global')
 
     def register_mpv_actions(self, helper: PluginHelper):
         # Register MPV media player actions
@@ -406,8 +335,8 @@ class MediaPlayerPlugin(PluginBase):
         if media_playback_method == "media_keys":
             # Start playlist using media keys
             pass
-        elif media_playback_method == "wmsa":
-            # Start playlist using Windows Media Session API
+        elif media_playback_method == "system_wide":
+            # Start playlist using the default media player
             pass
         elif media_playback_method == "mpv":
             # Start playlist using MPV
@@ -424,10 +353,10 @@ class MediaPlayerPlugin(PluginBase):
 
         # Temporary catch-all.
         # TODO: Expand this to support other media players
-        log('info', f"Current directory: {os.getcwd()}")
+        log('debug', f"Current directory: {os.getcwd()}")
         playlist_path: str = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists', f'{args["playlist"]}.m3u')
-        log('info', f"Playlist path: {playlist_path}")
-        log('info', f'Playlist file exists: {os.path.exists(playlist_path)}')
+        log('debug', f"Playlist path: {playlist_path}")
+        log('debug', f'Playlist file exists: {os.path.exists(playlist_path)}')
         if platform.system() == 'Darwin':       # macOS
             subprocess.call(('open', playlist_path))
         elif platform.system() == 'Windows':    # Windows
@@ -437,32 +366,48 @@ class MediaPlayerPlugin(PluginBase):
 
         return 'Started playlist: ' + args['playlist']
 
-    async def get_media_info(self):
-        current_session = self.media_session_manager.get_current_session()
-        if current_session:
-            info = await current_session.try_get_media_properties_async()
-            if info is None:
-                return
-            print(f"Now Playing: {info.title} by {info.artist}")
-
-    # asyncio.run(get_media_info())
-
-    async def _initialize_media_session_manager(self):
-        return await MediaManager.request_async()
-
-    def media_player_state_status_generator(self, projected_states: dict[str, dict]) -> list[tuple[str, Any]]:
+    def media_player_state_status_generator(self, helper: PluginHelper, projected_states: dict[str, dict]) -> list[tuple[str, Any]]:
+        media_playback_method = self._get_media_playback_method(helper)
+        if media_playback_method != "system_wide":
+            log('debug', f'Media playback method is not system_wide ({media_playback_method}), skipping media player state status generation.')
+            return []
+        state = projected_states.get('CurrentMediaPlaybackState', {}).get('media_playback_state', {})
+        log('debug', f'Adding state to context: {state}')
         return [
-            ('Current media player state', projected_states.get('CurrentMediaPlayerState', {}).get('state', {}))
+            ('Current media player state', state)
         ]
 
     def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
-        if isinstance(event, MediaPlaybackStateValueUpdatedEvent):
-            # Decide based on chance set in media_change_assistant_comments_chance setting.
-            chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
-            if chance == 0:
+        if isinstance(event, MediaPlaybackStateChangedEvent):
+            if event.processed_by_us_at == 0.0: # Only handle unprocessed events, of type MediaPlaybackStateChangedEvent.
+                # Decide based on chance set in media_change_assistant_comments_chance setting.
+                event.processed_by_us_at = datetime.now(timezone.utc).timestamp() # Mark the event as processed by this plugin.
+                chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
+                if chance == 0:
+                    return False
+                if (random.random() * 100) < chance:
+                    return True
                 return False
-            if (random.random() * 100) < chance:
-                return True
-            return False
         return None # No opinion. Let the AI decide.
+    
+    def _media_controller_on_media_playback_info_changed_handler(self, helper: PluginHelper, state: MediaPlaybackStateInner):
+        log('debug', 'Current media state: ', state)
         
+        event = MediaPlaybackStateChangedEvent(state)
+        helper.put_incoming_event(event) # Updates the projected state
+
+    def _get_media_playback_method(self, helper: PluginHelper) -> str:
+        return cast(str, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
+    
+    def new_media_event_prompt_handler(self, event: Event, helper: PluginHelper) -> list[ChatCompletionMessageParam]:
+        if isinstance(event, MediaPlaybackStateChangedEvent):
+            log('debug', f'New media event: {event}')
+            # Create a message for the assistant
+            return [
+                {
+                    "role": "system",
+                    "content": f"New media playback state: {event.new_state}",
+                }
+            ]
+        return []
+    
