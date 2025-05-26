@@ -15,7 +15,8 @@ from lib.Logger import log
 from lib.EventManager import Projection
 from lib.PluginBase import PluginBase
 from lib.Event import Event, ProjectedEvent
-from .MediaControllers import MPRISController, MacOSMediaController, MediaController, MediaPlaybackStateInner, WindowsMediaController, default_media_playback_state, get_platform_controller
+from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playback_state, MediaControllerBase
+from .MediaControllers import get_platform_controller
 
 @dataclass
 @final
@@ -55,7 +56,7 @@ class MediaPlayerPlugin(PluginBase):
     def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
         super().__init__(plugin_manifest, event_classes = [MediaPlaybackStateChangedEvent])
 
-        self._media_controller: MPRISController | WindowsMediaController | MacOSMediaController | None = None
+        self._media_controller: MediaControllerBase | None = None
 
         # Define the plugin settings
         # This is the settings that will be shown in the UI for this plugin.
@@ -391,7 +392,7 @@ class MediaPlayerPlugin(PluginBase):
         return None # No opinion. Let the AI decide.
     
     def _media_controller_on_media_playback_info_changed_handler(self, helper: PluginHelper, state: MediaPlaybackStateInner):
-        log('debug', 'Current media state: ', state)
+        log('debug', 'New media state: ', state)
         
         event = MediaPlaybackStateChangedEvent(state)
         helper.put_incoming_event(event) # Updates the projected state
