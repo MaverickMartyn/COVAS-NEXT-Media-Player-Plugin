@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Literal, TypedDict, final, override, Optional
 
+from threading import Thread, Event
+
 from lib.Event import Event
 from lib.EventManager import Projection
 from lib.PluginHelper import PluginHelper
@@ -14,17 +16,16 @@ from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playbac
 
 if platform.system() == "Linux":
     from pydbus import SessionBus
-    from threading import Thread, Event
+    from pydbus.bus import Bus
 else:
     SessionBus = None
-    Thread = None
-    Event = None
+    Bus = None
 import time
 
 class MPRISController(MediaControllerBase):
     def __init__(self):
         super().__init__()
-        if SessionBus is None or Thread is None or Event is None:
+        if SessionBus is None or Bus is None:
             log('error', 'MPRISController requires pydbus and threading modules, which are not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
         self.bus = SessionBus()
@@ -35,7 +36,9 @@ class MPRISController(MediaControllerBase):
         self._poll_thread.start()
 
     def _get_active_player(self):
-        mpris_services = [name for name in self.bus.list_names() if name.startswith("org.mpris.MediaPlayer2.")]
+        dbus_proxy = self.bus.get('.DBus', '/org/freedesktop/DBus')
+        all_names = dbus_proxy.ListNames()
+        mpris_services = [name for name in all_names if name.startswith("org.mpris.MediaPlayer2.")]
         for name in mpris_services:
             try:
                 player = self.bus.get(name, '/org/mpris/MediaPlayer2')
