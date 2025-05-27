@@ -50,7 +50,7 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
 # Main plugin class
 # This is the class that will be loaded by the PluginManager.
 class MediaPlayerPlugin(PluginBase):
-    DEFAULT_PLAYBACK_METHOD: str = 'system_wide'
+    DEFAULT_PLAYBACK_METHOD: str = 'system_wide' if platform.system() in ['Windows', 'Linux'] else 'media_keys'
     DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
     
     def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
@@ -60,6 +60,7 @@ class MediaPlayerPlugin(PluginBase):
 
         # Define the plugin settings
         # This is the settings that will be shown in the UI for this plugin.
+        os_name = platform.system()
         self.settings_config: PluginSettings | None = PluginSettings(
             key="MediaPlayerPlugin",
             label="Media Player Plugin",
@@ -90,7 +91,7 @@ class MediaPlayerPlugin(PluginBase):
                             default_value = self.DEFAULT_PLAYBACK_METHOD,
                             select_options= [
                                 SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
-                                SelectOption(key="system_wide", label="Generic System-Wide Integration", value="system_wide", disabled=False),
+                                SelectOption(key="system_wide", label="Generic System-Wide Integration", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
                                 SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
                                 SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
                                 SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
