@@ -175,8 +175,6 @@ class MediaPlayerPlugin(PluginBase):
         else:
             log('error', f"Invalid media playback method: {media_playback_method}")
             return
-            
-        self.register_playlist_action(media_playback_method, helper)
 
         log('debug', f"Projections registered for {self.plugin_manifest.name}")
 
@@ -313,7 +311,7 @@ class MediaPlayerPlugin(PluginBase):
     def register_playlist_action(self, media_playback_method: str, helper: PluginHelper):
         # Register playlist action
         # Find all playlist files
-        playlists_path = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), './playlists')
+        playlists_path = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists')
         if not os.path.exists(playlists_path):
             os.makedirs(playlists_path)
 
