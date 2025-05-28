@@ -177,14 +177,6 @@ class MediaPlayerPlugin(PluginBase):
             return
 
         log('debug', f"Projections registered for {self.plugin_manifest.name}")
-
-    @override
-    def register_sideeffects(self, helper: PluginHelper):
-        pass
-
-    @override
-    def register_prompt_event_handlers(self, helper: PluginHelper):
-        pass # helper.register_prompt_event_handler(lambda event: self.new_media_event_prompt_handler(event, helper)),
         
     @override
     def register_status_generators(self, helper: PluginHelper):
