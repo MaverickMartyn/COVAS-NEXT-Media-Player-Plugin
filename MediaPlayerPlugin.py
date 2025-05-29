@@ -311,6 +311,9 @@ class MediaPlayerPlugin(PluginBase):
         files = list(filter(lambda x: x.endswith('.m3u'), files))
         playlist_names = list(map(lambda x: x[:-4], files))
         log('debug', f"Discovered playlist names: {playlist_names}")
+        if not playlist_names:
+            log('debug', 'No playlists found, skipping playlist action registration.')
+            return
 
         helper.register_action('start_playlist', "Start a music/media playlist by name", {
             "type": "object",
