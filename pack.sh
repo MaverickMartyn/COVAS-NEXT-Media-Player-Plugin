@@ -14,7 +14,17 @@ if [ -f "requirements.txt" ]; then
 fi
 
 # Remember to add any additional files, and change the name of the plugin
-artifacts=("MediaPlayerPlugin.py", "MediaControllers.py", "MediaControllerTypes.py", "MPRISController.py", "WindowsMediaController.py", "requirements.txt", "README.md" "manifest.json", "__init__.py")
+artifacts=(
+    "MediaPlayerPlugin.py"
+    "MediaControllers.py"
+    "MediaControllerTypes.py"
+    "MPRISController.py"
+    "WindowsMediaController.py"
+    "requirements.txt"
+    "README.md"
+    "manifest.json"
+    "__init__.py"
+)
 
 if [ -d "deps" ]; then
     artifacts+=("deps")
