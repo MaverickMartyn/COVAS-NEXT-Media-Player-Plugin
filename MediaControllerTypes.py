@@ -4,9 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Literal, TypedDict, final, override
 
-from lib.Event import Event
-from lib.EventManager import Projection
-from lib.PluginHelper import PluginHelper
 from lib.Logger import log
 
 class MediaPlaybackStateInner(TypedDict):
