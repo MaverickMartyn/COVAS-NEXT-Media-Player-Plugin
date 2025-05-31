@@ -1,11 +1,12 @@
+import json
 import dbus_next
-from dbus_next.introspection import Node
+from dbus_next.introspection import Interface, Node
 from dbus_next.aio.proxy_object import ProxyInterface, ProxyObject
 import platform
 import asyncio
 import sys
 from threading import Thread, Event
-from typing import Optional, cast
+from typing import List, Optional, cast
 from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playback_state, MediaControllerBase
 from lib.Logger import log
 
@@ -93,10 +94,25 @@ class MPRISController(MediaControllerBase):
             pass
 
     async def _get_media_playback_state(self) -> MediaPlaybackStateInner:
+        if not self._player_iface:
+            log('debug', 'No player interface available, returning default state')
+            return default_media_playback_state()
         try:
             metadata = await self._player_iface.get_metadata()
             playback_status = await self._player_iface.get_playback_status()
-            shuffle = (self._player_iface.get_shuffle) if hasattr(self._player_iface, 'get_shuffle') else None
+
+            # Fix the Shuffle property, since VLC is being stupid.
+            introspection: Node = self._player_iface.introspection
+            for prop in introspection.properties:
+                # log('debug', vars(prop))
+                if prop.name == "Shuffle" and prop.signature == "d":
+                    # log('debug', f'Found Incorrect Shuffle property: {prop.name} with type {prop.signature}. Fixing to boolean.')
+                    # Fix the type of Shuffle property to boolean
+                    prop.signature = "b"
+                    
+            shuffle = cast(bool, await self._player_iface.get_shuffle()) if hasattr(self._player_iface, 'get_shuffle') else None
+            # if hasattr(self._player_iface, 'get_shuffle'):
+            #     log('debug', f'get_shuffle: {shuffle}')
             loop_status = await self._player_iface.get_loop_status() if hasattr(self._player_iface, 'get_loop_status') else None
             # shuffle = False
             # loop_status = None
