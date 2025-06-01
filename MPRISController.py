@@ -126,7 +126,7 @@ class MPRISController(MediaControllerBase):
                 "subtitle": cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:album")) or {"value":None}).value),
                 "title": cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:title")) or {"value":None}).value),
                 "is_shuffle_active": bool(shuffle) if shuffle is not None else None,
-                "auto_repeat_mode": loop_status == "Track" if loop_status is not None else None,
+                "auto_repeat_mode": loop_status,
                 "playback_status": playback_status
             }
         except Exception:

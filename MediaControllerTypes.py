@@ -11,7 +11,7 @@ class MediaPlaybackStateInner(TypedDict):
     subtitle: str | None
     title: str | None
     is_shuffle_active: bool | None
-    auto_repeat_mode: bool | None
+    auto_repeat_mode: str | None
     playback_status: str | None
 
 def default_media_playback_state() -> MediaPlaybackStateInner:
@@ -20,7 +20,7 @@ def default_media_playback_state() -> MediaPlaybackStateInner:
         subtitle=None,
         title=None,
         is_shuffle_active=False,
-        auto_repeat_mode=False,
+        auto_repeat_mode=None,
         playback_status=None
     )
 

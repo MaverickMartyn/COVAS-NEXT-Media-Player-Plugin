@@ -129,14 +129,14 @@ class WindowsMediaController(MediaControllerBase):
             'artist': media_properties.artist,
             'subtitle': media_properties.subtitle,
             'title': media_properties.title,
-            'is_shuffle_active': False,
-            'auto_repeat_mode': False,
+            'is_shuffle_active': None,
+            'auto_repeat_mode': None,
             'playback_status': None
             })
         if hasattr(playback_info, 'is_shuffle_active'):
-            state['is_shuffle_active'] = playback_info.is_shuffle_active or False
+            state['is_shuffle_active'] = playback_info.is_shuffle_active or None
         if hasattr(playback_info, 'auto_repeat_mode'):
-            state['auto_repeat_mode'] = playback_info.auto_repeat_mode or False
+            state['auto_repeat_mode'] = playback_info.auto_repeat_mode or None
         if hasattr(playback_info, 'playback_status'):
             state['playback_status'] = playback_info.playback_status.name
         
