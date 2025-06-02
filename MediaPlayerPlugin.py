@@ -25,7 +25,6 @@ class MediaPlaybackStateChangedEvent(Event):
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     kind: Literal['game', 'user', 'assistant', 'assistant_completed', 'tool', 'status', 'projected', 'external', 'archive'] = field(default='tool')
     processed_at: float = field(default=0.0)
-    processed_by_us_at: float = field(default=0.0)
     
 class MediaPlaybackState(TypedDict):
     event: str
@@ -187,7 +186,11 @@ class MediaPlayerPlugin(PluginBase):
     def on_plugin_helper_ready(self, helper: PluginHelper):
         if self._get_media_playback_method(helper) == "system_wide":
             self._media_controller = get_platform_controller()
-            self._media_controller_on_media_playback_info_changed_handler(helper, self._media_controller.get_media_playback_state())
+            projection = cast(CurrentMediaPlaybackState | None, helper.get_projection(CurrentMediaPlaybackState)) or None
+            if projection is not None:
+                cur_state = self._media_controller.get_media_playback_state()
+                if projection.state["media_playback_state"] != cur_state:
+                    self._media_controller_on_media_playback_info_changed_handler(helper, cur_state)
             self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
         
     @override
@@ -374,15 +377,17 @@ class MediaPlayerPlugin(PluginBase):
 
     def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
         if isinstance(event, MediaPlaybackStateChangedEvent):
-            if event.processed_by_us_at == 0.0: # Only handle unprocessed events, of type MediaPlaybackStateChangedEvent.
-                # Decide based on chance set in media_change_assistant_comments_chance setting.
-                event.processed_by_us_at = datetime.now(timezone.utc).timestamp() # Mark the event as processed by this plugin.
-                chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
-                if chance == 0:
+            # Check if event.timestamp is within the last 5 seconds, mostly to avoid commenting on chat startup.
+            if datetime.now(timezone.utc).timestamp() - event.processed_at <= 5:
+                cur_state = cast(MediaPlaybackStateInner, projected_states.get('CurrentMediaPlaybackState', {}).get('media_playback_state', {})) or {}
+                if event.new_state == cur_state:  # Only handle event, if it's current.
+                    # Decide based on chance set in media_change_assistant_comments_chance setting.
+                    chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
+                    if chance == 0:
+                        return False
+                    if (random.random() * 100) < chance:
+                        return True
                     return False
-                if (random.random() * 100) < chance:
-                    return True
-                return False
         return None # No opinion. Let the AI decide.
     
     def _media_controller_on_media_playback_info_changed_handler(self, helper: PluginHelper, state: MediaPlaybackStateInner):

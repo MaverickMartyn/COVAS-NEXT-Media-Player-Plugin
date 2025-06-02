@@ -6,7 +6,7 @@ import platform
 import asyncio
 import sys
 from threading import Thread, Event
-from typing import List, Optional, cast
+from typing import Any, List, Optional, cast, override
 from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playback_state, MediaControllerBase
 from lib.Logger import log
 
@@ -26,12 +26,12 @@ class MPRISController(MediaControllerBase):
             log('error', 'MPRISController requires dbus-next, which is not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
 
-        self._loop = asyncio.new_event_loop()
-        self._stop_event = Event()
+        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._stop_event: Event = Event()
         self._last_state: Optional[MediaPlaybackStateInner] = None
-        self._player_iface = None
+        self._player_iface: ProxyInterface | None = None
 
-        self._poll_thread = Thread(target=self._run, daemon=True)
+        self._poll_thread: Thread = Thread(target=self._run, daemon=True)
         self._poll_thread.start()
 
     def _run(self):
@@ -56,7 +56,7 @@ class MPRISController(MediaControllerBase):
                 proxy_obj: ProxyObject = self._bus.get_proxy_object(name, "/org/mpris/MediaPlayer2", introspection)
                 player_iface: ProxyInterface = proxy_obj.get_interface("org.mpris.MediaPlayer2.Player")
                 
-                status = await player_iface.get_playback_status()
+                status: str = await player_iface.get_playback_status()
                 log('debug', f'Player {name} status: {status}')
                 if status == "Playing":
                     self._player_iface = player_iface
@@ -72,7 +72,7 @@ class MPRISController(MediaControllerBase):
             proxy_obj = self._bus.get_proxy_object(mpris_names[0], "/org/mpris/MediaPlayer2", introspection)
             self._player_iface = proxy_obj.get_interface("org.mpris.MediaPlayer2.Player")
 
-    async def _list_names(self):
+    async def _list_names(self) -> list[str]:
         introspection = await self._bus.introspect("org.freedesktop.DBus", "/org/freedesktop/DBus")
         proxy = self._bus.get_proxy_object("org.freedesktop.DBus", "/org/freedesktop/DBus", introspection)
         iface = proxy.get_interface("org.freedesktop.DBus")
@@ -143,42 +143,49 @@ class MPRISController(MediaControllerBase):
     #         return None
 
     @staticmethod
-    def _run_coroutine_in_loop(loop, coro):
+    def _run_coroutine_in_loop(loop: asyncio.AbstractEventLoop, coro):
         asyncio.run_coroutine_threadsafe(coro, loop)
 
+    @override
     def play(self) -> bool:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_play())
             return True
         return False
 
+    @override
     def pause(self) -> bool:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_pause())
             return True
         return False
 
+    @override
     def stop(self) -> bool:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_stop())
             return True
         return False
 
+    @override
     def prev_track(self) -> bool:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_previous())
             return True
         return False
 
+    @override
     def next_track(self) -> bool:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_next())
             return True
         return False
 
+    @override
     def get_media_playback_state(self) -> MediaPlaybackStateInner:
         return self._last_state or default_media_playback_state()
 
+    @override
     def cleanup(self):
         self._stop_event.set()
         self._poll_thread.join(timeout=2)
