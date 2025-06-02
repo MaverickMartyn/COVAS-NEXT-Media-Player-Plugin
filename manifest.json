@@ -1,7 +1,7 @@
 {
     "guid": "e24520af-5b71-456e-85f4-68140b18aee6",
     "name": "Media Player Plugin",
-    "version": "0.0.1",
+    "version": "0.0.5",
     "author": "MaverickMartyn",
     "repository": "https://github.com/MaverickMartyn/COVAS-NEXT-Media-Player-Plugin",
     "description": "Adds media player capabilities to COVAS:NEXT, including support for media keys, Windows Media Session API, and various media players.",
