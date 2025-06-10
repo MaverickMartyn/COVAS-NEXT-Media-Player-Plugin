@@ -382,7 +382,7 @@ class MediaPlayerPlugin(PluginBase):
                 cur_state = cast(MediaPlaybackStateInner, projected_states.get('CurrentMediaPlaybackState', {}).get('media_playback_state', {})) or {}
                 if event.new_state == cur_state:  # Only handle event, if it's current.
                     # Decide based on chance set in media_change_assistant_comments_chance setting.
-                    chance = cast(int, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
+                    chance = cast(int, helper.get_plugin_setting('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
                     if chance == 0:
                         return False
                     if (random.random() * 100) < chance:
@@ -397,7 +397,7 @@ class MediaPlayerPlugin(PluginBase):
         helper.put_incoming_event(event) # Updates the projected state
 
     def _get_media_playback_method(self, helper: PluginHelper) -> str:
-        return cast(str, helper.get_plugin_settings('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
+        return cast(str, helper.get_plugin_setting('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
     
     def new_media_event_prompt_handler(self, event: Event, helper: PluginHelper) -> list[ChatCompletionMessageParam]:
         if isinstance(event, MediaPlaybackStateChangedEvent):
