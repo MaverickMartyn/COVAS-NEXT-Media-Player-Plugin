@@ -18,6 +18,18 @@ else:
 
 import time
 
+class MprisPlayerInterface(ProxyInterface):
+    async def call_play(self) -> None: ...
+    async def call_stop(self) -> None: ...
+    async def call_pause(self) -> None: ...
+    async def call_next(self) -> None: ...
+    async def call_previous(self) -> None: ...
+    async def get_playback_status(self) -> str: ...
+    async def get_metadata(self) -> Any: ...
+    async def get_loop_status(self) -> str | None: ...
+    async def get_shuffle(self) -> bool: ...
+    async def call_list_names(self) -> list[str]: ...
+
 
 class MPRISController(MediaControllerBase):
     def __init__(self):
@@ -29,7 +41,7 @@ class MPRISController(MediaControllerBase):
         self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
         self._stop_event: Event = Event()
         self._last_state: Optional[MediaPlaybackStateInner] = None
-        self._player_iface: ProxyInterface | None = None
+        self._player_iface: MprisPlayerInterface | None = None
 
         self._poll_thread: Thread = Thread(target=self._run, daemon=True)
         self._poll_thread.start()
@@ -54,7 +66,7 @@ class MPRISController(MediaControllerBase):
             try:
                 introspection: Node = await self._bus.introspect(name, "/org/mpris/MediaPlayer2")
                 proxy_obj: ProxyObject = self._bus.get_proxy_object(name, "/org/mpris/MediaPlayer2", introspection)
-                player_iface: ProxyInterface = proxy_obj.get_interface("org.mpris.MediaPlayer2.Player")
+                player_iface: MprisPlayerInterface = cast(MprisPlayerInterface, proxy_obj.get_interface("org.mpris.MediaPlayer2.Player"))
                 
                 status: str = await player_iface.get_playback_status()
                 log('debug', f'Player {name} status: {status}')
@@ -70,12 +82,12 @@ class MPRISController(MediaControllerBase):
             log('debug', 'No active MPRIS player found, using the first available player.')
             introspection = await self._bus.introspect(mpris_names[0], "/org/mpris/MediaPlayer2")
             proxy_obj = self._bus.get_proxy_object(mpris_names[0], "/org/mpris/MediaPlayer2", introspection)
-            self._player_iface = proxy_obj.get_interface("org.mpris.MediaPlayer2.Player")
+            self._player_iface = cast(MprisPlayerInterface, proxy_obj.get_interface("org.mpris.MediaPlayer2.Player"))
 
     async def _list_names(self) -> list[str]:
-        introspection = await self._bus.introspect("org.freedesktop.DBus", "/org/freedesktop/DBus")
+        introspection = await self._bus.introspect(bus_name="org.freedesktop.DBus", path="/org/freedesktop/DBus")
         proxy = self._bus.get_proxy_object("org.freedesktop.DBus", "/org/freedesktop/DBus", introspection)
-        iface = proxy.get_interface("org.freedesktop.DBus")
+        iface = cast(MprisPlayerInterface, proxy.get_interface("org.freedesktop.DBus"))
         return await iface.call_list_names()
 
     async def _poll(self):
@@ -143,7 +155,7 @@ class MPRISController(MediaControllerBase):
     #         return None
 
     @staticmethod
-    def _run_coroutine_in_loop(loop: asyncio.AbstractEventLoop, coro):
+    def _run_coroutine_in_loop(loop: asyncio.AbstractEventLoop, coro) -> None:
         asyncio.run_coroutine_threadsafe(coro, loop)
 
     @override
