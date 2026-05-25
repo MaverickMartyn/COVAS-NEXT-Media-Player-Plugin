@@ -48,6 +48,7 @@ class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
 
 # Main plugin class
 # This is the class that will be loaded by the PluginManager.
+# TODO: Move the old override methods to the on_chat_start and on_chat_stop hooks, and call the new helper functions from there instead.
 class MediaPlayerPlugin(PluginBase):
     DEFAULT_PLAYBACK_METHOD: str = 'system_wide' if platform.system() in ['Windows', 'Linux'] else 'media_keys'
     DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
@@ -122,7 +123,8 @@ class MediaPlayerPlugin(PluginBase):
                 ),
             ]
         )
-    
+
+    # TODO: Move to on_chat_start
     @override
     def register_actions(self, helper: PluginHelper):
         # Register actions
@@ -151,6 +153,7 @@ class MediaPlayerPlugin(PluginBase):
 
         log('debug', f"Actions registered for {self.plugin_manifest.name}")
         
+    # TODO: Move to on_chat_start
     @override
     def register_projections(self, helper: PluginHelper):
         # Register projections
@@ -177,11 +180,13 @@ class MediaPlayerPlugin(PluginBase):
 
         log('debug', f"Projections registered for {self.plugin_manifest.name}")
         
+    # TODO: Move to on_chat_start
     @override
     def register_status_generators(self, helper: PluginHelper):
         # Register prompt generators
         helper.register_status_generator(lambda projected_states: self.media_player_state_status_generator(helper, projected_states))
     
+    # TODO: Move to on_chat_start
     @override
     def on_plugin_helper_ready(self, helper: PluginHelper):
         if self._get_media_playback_method(helper) == "system_wide":
@@ -202,6 +207,7 @@ class MediaPlayerPlugin(PluginBase):
                 self._media_controller = None  # Reset the media controller
         log('debug', f"Executed on_chat_stop hook for {self.plugin_manifest.name}")
 
+    # TODO: Move this to use the new should_reply_check callback in PluginHelper.register_event.
     @override
     def register_should_reply_handlers(self, helper: PluginHelper):
         if self._get_media_playback_method(helper) == "system_wide":
@@ -255,7 +261,8 @@ class MediaPlayerPlugin(PluginBase):
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings
-        helper.register_keybindings({
+        # TODO: We're only directly updating the key dictionary here, because of an API regression. Change to a public API when one is available.
+        helper._keys.keys.update({
             'MediaPlayPause': { 'key': 162, 'mods': [], 'hold': False },
             'MediaPreviousTrack': { 'key': 144, 'mods': [], 'hold': False },
             'MediaNextTrack': { 'key': 153, 'mods': [], 'hold': False },
