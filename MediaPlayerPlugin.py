@@ -30,6 +30,7 @@ class MediaPlayerPlugin(PluginBase):
         super().__init__(plugin_manifest)
 
         self._media_controller: MediaControllerBase | None = None
+        self._playback_state_projection: CurrentMediaPlaybackState | None = None
         os_name = platform.system()
 
         # Define the plugin settings
@@ -135,7 +136,8 @@ class MediaPlayerPlugin(PluginBase):
 
         # Register projections
         if media_playback_method == "system_wide":
-            helper.register_projection(CurrentMediaPlaybackState())
+            self._playback_state_projection = CurrentMediaPlaybackState()
+            helper.register_projection(self._playback_state_projection)
             
         # Register status generators
         if media_playback_method == "system_wide":
@@ -144,12 +146,13 @@ class MediaPlayerPlugin(PluginBase):
 
         if media_playback_method == "system_wide":
             self._media_controller = get_platform_controller()
-            # Set track info, based on the projection, which would contain whatever track was played last during an active session. Probably not necessary.
-            # projection = cast(CurrentMediaPlaybackState | None, helper.get_projection(CurrentMediaPlaybackState)) or None # TODO: fix get_projection call.
-            # if projection is not None:
-            #     cur_state = self._media_controller.get_media_playback_state()
-            #     if projection.state["media_playback_state"] != cur_state:
-            #         self._media_controller_on_media_playback_info_changed_handler(helper, cur_state)
+            projection = self._playback_state_projection
+            if projection is not None:
+                current_state = self._media_controller.get_media_playback_state()
+                log('debug', f"Found previous track info on startup")
+                if projection.state != current_state:
+                    self._media_controller_on_media_playback_info_changed_handler(helper, current_state)
+                    log('debug', f"Updated current track on startup")
             
             self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
             log('debug', f"Media controller initialized{self.plugin_manifest.name}")
