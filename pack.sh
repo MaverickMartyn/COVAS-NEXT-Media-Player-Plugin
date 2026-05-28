@@ -20,6 +20,8 @@ artifacts=(
     "MediaControllerTypes.py"
     "MPRISController.py"
     "WindowsMediaController.py"
+    "ActionParams"
+    "Projections"
     "requirements.txt"
     "README.md"
     "manifest.json"

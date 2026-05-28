@@ -1,66 +1,39 @@
+from datetime import datetime, timezone
 import os
 import platform
 import random
 import subprocess
-from typing import Any, Callable, Literal, TypedDict, cast, final, override
+from typing import Any, Literal, TypeVar, cast, override
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel, Field
 
-from openai.types.chat import ChatCompletionMessageParam
-
-from lib.PluginHelper import PluginHelper, PluginManifest
-from lib.PluginSettingDefinitions import PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
+from lib.PluginHelper import PluginEvent, PluginHelper, ProjectedStates
+from lib.PluginSettingDefinitions import (
+    PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
+)
 from lib.Logger import log
-from lib.EventManager import Projection
-from lib.PluginBase import PluginBase
-from lib.Event import Event, ProjectedEvent
-from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playback_state, MediaControllerBase
+from lib.PluginBase import PluginBase, PluginManifest
+from .Projections.CurrentMediaPlaybackState import CurrentMediaPlaybackState
+from .ActionParams.MediaPlayerActionParams import MediaPlayerActionParams
+from .ActionParams.PressMediaKeyParams import PressMediaKeyParams
+from .ActionParams.StartPlaylistParams import StartPlaylistParams
+from .MediaControllerTypes import MediaControllerBase, MediaPlaybackStateInner
 from .MediaControllers import get_platform_controller
-
-@dataclass
-@final
-class MediaPlaybackStateChangedEvent(Event):
-    new_state: MediaPlaybackStateInner
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    kind: Literal['game', 'user', 'assistant', 'assistant_completed', 'tool', 'status', 'projected', 'external', 'archive'] = field(default='tool')
-    processed_at: float = field(default=0.0)
-    
-class MediaPlaybackState(TypedDict):
-    event: str
-    media_playback_state: MediaPlaybackStateInner
-
-class CurrentMediaPlaybackState(Projection[MediaPlaybackState]):
-    @override
-    def get_default_state(self) -> MediaPlaybackState:
-        return MediaPlaybackState({
-            'event': 'MediaState',
-            'media_playback_state': default_media_playback_state()
-        })
-
-    @override
-    def process(self, event: Event) -> list[ProjectedEvent]:
-        projected_events: list[ProjectedEvent] = []
-        if isinstance(event, MediaPlaybackStateChangedEvent):
-            self.state['media_playback_state'] = event.new_state
-            projected_events.append(ProjectedEvent({"event": "MediaPlaybackStateChanged", "new_state": event.new_state}))
-        return projected_events
 
 # Main plugin class
 # This is the class that will be loaded by the PluginManager.
-# TODO: Move the old override methods to the on_chat_start and on_chat_stop hooks, and call the new helper functions from there instead.
 class MediaPlayerPlugin(PluginBase):
     DEFAULT_PLAYBACK_METHOD: str = 'system_wide' if platform.system() in ['Windows', 'Linux'] else 'media_keys'
     DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE : int = 10
-    
-    def __init__(self, plugin_manifest: PluginManifest): # This is the name that will be shown in the UI.
-        super().__init__(plugin_manifest, event_classes = [MediaPlaybackStateChangedEvent])
+
+    def __init__(self, plugin_manifest: PluginManifest):
+        super().__init__(plugin_manifest)
 
         self._media_controller: MediaControllerBase | None = None
+        os_name = platform.system()
 
         # Define the plugin settings
         # This is the settings that will be shown in the UI for this plugin.
-        os_name = platform.system()
         self.settings_config: PluginSettings | None = PluginSettings(
             key="MediaPlayerPlugin",
             label="Media Player Plugin",
@@ -123,13 +96,13 @@ class MediaPlayerPlugin(PluginBase):
                 ),
             ]
         )
-
-    # TODO: Move to on_chat_start
+    
+    # The following overrides are optional. Remove them if you don't need them.
     @override
-    def register_actions(self, helper: PluginHelper):
-        # Register actions
-        media_playback_method = self._get_media_playback_method(helper)
+    def on_chat_start(self, helper: PluginHelper):
+        media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
 
+        # Register actions
         if media_playback_method == "media_keys":
             # Register media keys actions
             self.register_media_keys_actions(helper)
@@ -149,76 +122,86 @@ class MediaPlayerPlugin(PluginBase):
             log('error', f"Invalid media playback method: {media_playback_method}")
             return
             
-        self.register_playlist_action(media_playback_method, helper)
-
+        self.register_playlist_action(helper)
+        
         log('debug', f"Actions registered for {self.plugin_manifest.name}")
+
+        # Register events
+        if media_playback_method == "system_wide":
+            helper.register_event('MediaPlaybackStateChangedEvent', should_reply_check=self.media_player_should_reply_handler, prompt_generator=self.new_media_event_prompt_handler)
+            log('debug', 'Registered media playback state changed event.')
         
-    # TODO: Move to on_chat_start
-    @override
-    def register_projections(self, helper: PluginHelper):
+        log('debug', f"Events registered for {self.plugin_manifest.name}")
+
         # Register projections
-        media_playback_method = self._get_media_playback_method(helper)
-
-        if media_playback_method == "media_keys":
-            # Register media keys projections
-            pass
-        elif media_playback_method == "system_wide":
-            # Register the generic media meta data projection
+        if media_playback_method == "system_wide":
             helper.register_projection(CurrentMediaPlaybackState())
-        elif media_playback_method == "mpv":
-            # Register MPV projections
-            pass
-        elif media_playback_method == "vlc":
-            # Register VLC projections
-            pass
-        elif media_playback_method == "spotify":
-            # Register Spotify projections
-            pass
-        else:
-            log('error', f"Invalid media playback method: {media_playback_method}")
-            return
+            
+        # Register status generators
+        if media_playback_method == "system_wide":
+            helper.register_status_generator(self.media_player_state_status_generator)
+            #lambda states: [("DemoProjectionValue", "The current demosaicing value is " + str(states.get("DemoProjection").value) if states.get("DemoProjection") else None)]
 
-        log('debug', f"Projections registered for {self.plugin_manifest.name}")
-        
-    # TODO: Move to on_chat_start
-    @override
-    def register_status_generators(self, helper: PluginHelper):
-        # Register prompt generators
-        helper.register_status_generator(lambda projected_states: self.media_player_state_status_generator(helper, projected_states))
-    
-    # TODO: Move to on_chat_start
-    @override
-    def on_plugin_helper_ready(self, helper: PluginHelper):
-        if self._get_media_playback_method(helper) == "system_wide":
+        if media_playback_method == "system_wide":
             self._media_controller = get_platform_controller()
-            projection = cast(CurrentMediaPlaybackState | None, helper.get_projection(CurrentMediaPlaybackState)) or None
-            if projection is not None:
-                cur_state = self._media_controller.get_media_playback_state()
-                if projection.state["media_playback_state"] != cur_state:
-                    self._media_controller_on_media_playback_info_changed_handler(helper, cur_state)
+            # Set track info, based on the projection, which would contain whatever track was played last during an active session. Probably not necessary.
+            # projection = cast(CurrentMediaPlaybackState | None, helper.get_projection(CurrentMediaPlaybackState)) or None # TODO: fix get_projection call.
+            # if projection is not None:
+            #     cur_state = self._media_controller.get_media_playback_state()
+            #     if projection.state["media_playback_state"] != cur_state:
+            #         self._media_controller_on_media_playback_info_changed_handler(helper, cur_state)
+            
             self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
-        
+            log('debug', f"Media controller initialized{self.plugin_manifest.name}")
+
+        pass
+    
     @override
     def on_chat_stop(self, helper: PluginHelper):
         # Executed when the chat is stopped
-        if self._get_media_playback_method(helper) == "system_wide":
-            if self._media_controller is not None:
-                self._media_controller.cleanup()  # Cleanup the media controller
-                self._media_controller = None  # Reset the media controller
-        log('debug', f"Executed on_chat_stop hook for {self.plugin_manifest.name}")
+        pass
+    
+    def _media_controller_on_media_playback_info_changed_handler(self, helper: PluginHelper, state: MediaPlaybackStateInner):
+        log('debug', 'New media state from controller: ', state)
+        
+        event = PluginEvent(
+            plugin_event_name="MediaPlaybackStateChangedEvent",
+            plugin_event_content=state.model_dump()
+        )
+        helper.dispatch_event(event) # Updates the projected state
 
-    # TODO: Move this to use the new should_reply_check callback in PluginHelper.register_event.
-    @override
-    def register_should_reply_handlers(self, helper: PluginHelper):
-        if self._get_media_playback_method(helper) == "system_wide":
-            helper.register_should_reply_handler(lambda event, projected_states: self.media_player_should_reply_handler(helper, event, projected_states))
+    def new_media_event_prompt_handler(self, event: PluginEvent) -> str:
+        log('debug', f'New media event: {event}')
+        if (event.plugin_event_name == "MediaPlaybackStateChangedEvent"):
+            raise ValueError("This prompt handler is only for media playback state changed events.")
+        log('debug', f'New media event: {event}')
+        # Create a message for the assistant
+        # Does this need to be transformed to JSON, or does that happen automagically?
+        return f"New media playback state: {event.plugin_event_content}"
+            
+
+    def media_player_should_reply_handler(self, event: PluginEvent) -> bool:
+        log('debug', 'new_media_event_prompt_handler triggered', event)
+        if event.plugin_event_name != 'MediaPlaybackStateChangedEvent':
+            raise ValueError("This should_reply handler is only for media playback state changed events.")
+
+        # Check if event.timestamp is within the last 5 seconds, mostly to avoid commenting on chat startup.
+        if datetime.now(timezone.utc).timestamp() - event.processed_at <= 5:
+            # Decide based on chance set in media_change_assistant_comments_chance setting.
+            chance = self.get_setting("media_change_assistant_comments_chance", self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE, int)
+            if chance == 0:
+                return False
+            if (random.random() * 100) < chance:
+                return True
+            return False
+        return False
 
     # Actions
-    def pressMediaKey(self, args, projected_states, helper: PluginHelper) -> str:
+    def pressMediaKey(self, args: PressMediaKeyParams, helper: PluginHelper) -> str:
         log('debug', 'pressing media key: ', args)
-        key: str | None = args['key']
-        if key is None:
-            return "Error: No key specified."
+        key: str | None = args.key
+        # if key is None:
+        #     return "Error: No key specified."
         if key == "play_pause":
             helper.send_key('MediaPlayPause')
         elif key == "next":
@@ -227,41 +210,51 @@ class MediaPlayerPlugin(PluginBase):
             helper.send_key('MediaPreviousTrack')
         elif key == "stop":
             helper.send_key('MediaStop')
-        else:
-            return "Error: Invalid key specified."
+        # else:
+        #     return "Error: Invalid key specified."
             
         return "Pressed media key: " + key
-    def system_wide_media_action(self, args, projected_states, helper: PluginHelper) -> str:
+
+    def media_player_state_status_generator(self, projected_states: ProjectedStates) -> list[tuple[str, Any]]:
+        media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
+        if media_playback_method != "system_wide":
+            log('debug', f'Media playback method is not system_wide ({media_playback_method}), skipping media player state status generation.')
+            return []
+        state = projected_states.get('CurrentMediaPlaybackState', None)
+        log('debug', f'Adding state to context: {state}')
+        return [
+            ('Current media player state', state.model_dump() if state else None)
+        ]
+
+    def system_wide_media_action(self, args: MediaPlayerActionParams, projected_states: ProjectedStates) -> str:
         log('debug', 'Activating Generic Media API action: ', args)
-        action: str | None = args['action']
-        if action is None:
-            return "Error: No action specified."
 
         if self._media_controller is None:
             return "Error: Media controller is not initialized, despite using generic media integration. This should not happen."
 
         success: bool = False
-        if action == "play":
+        if args.action == "play":
             success = self._media_controller.play()
-        elif action == "pause":
+        elif args.action == "pause":
             success = self._media_controller.pause()
-        elif action == "next":
+        elif args.action == "next":
             success = self._media_controller.next_track()
-        elif action == "previous":
+        elif args.action == "previous":
             success = self._media_controller.prev_track()
-        elif action == "stop":
+        elif args.action == "stop":
             success = self._media_controller.stop()
         else:
             return "Error: Invalid action specified."
 
         if not success:
-            return "Error: Failed to activate Windows Media Session API action: " + action
+            return "Error: Failed to activate Windows Media Session API action: " + args.action
             
-        return "Activated Windows Media Session API action: " + action
+        return "Activated Windows Media Session API action: " + args.action
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings
         # TODO: We're only directly updating the key dictionary here, because of an API regression. Change to a public API when one is available.
+        # The new solution might be a new sendley API that accepts OS-agnostic key names, rather than having to inject new keys to the internal game-specific key dictionary.
         helper._keys.keys.update({
             'MediaPlayPause': { 'key': 162, 'mods': [], 'hold': False },
             'MediaPreviousTrack': { 'key': 144, 'mods': [], 'hold': False },
@@ -270,30 +263,24 @@ class MediaPlayerPlugin(PluginBase):
         })
 
         # Register media keys actions
-        helper.register_action('press_media_key', "Media/Music control. Play/pause/next/previous/stop", {
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "enum": ["play_pause", "next", "previous", "stop"],
-                    "description": "The media key to press."
-                }
-            }
-        }, lambda args, projected_states: self.pressMediaKey(args, projected_states, helper), 'global')
+        helper.register_action(
+            'press_media_key',
+            "Media/Music control. Play/pause/next/previous/stop",
+            PressMediaKeyParams,
+            lambda model, context: self.pressMediaKey(model, helper),
+            'global'
+        )
 
     def register_system_wide_media_actions(self, helper: PluginHelper):
         # Register system-wide media actions
 
-        helper.register_action('media_player_action', "Media/Music control. Play/pause/next/previous/stop", {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["play', 'pause", "next", "previous", "stop"],
-                    "description": "The media player function."
-                }
-            }
-        }, lambda args, projected_states: self.system_wide_media_action(args, projected_states, helper), 'global')
+        helper.register_action(
+            'media_player_action',
+            "Media/Music control. Play/pause/next/previous/stop",
+            MediaPlayerActionParams,
+            self.system_wide_media_action,
+            'global'
+        )
 
     def register_mpv_actions(self, helper: PluginHelper):
         # Register MPV media player actions
@@ -310,7 +297,7 @@ class MediaPlayerPlugin(PluginBase):
         # Use https://pypi.org/project/pyspotify/
         pass
 
-    def register_playlist_action(self, media_playback_method: str, helper: PluginHelper):
+    def register_playlist_action(self, helper: PluginHelper):
         # Register playlist action
         # Find all playlist files
         playlists_path = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists')
@@ -325,18 +312,26 @@ class MediaPlayerPlugin(PluginBase):
             log('debug', 'No playlists found, skipping playlist action registration.')
             return
 
-        helper.register_action('start_playlist', "Start a music/media playlist by name", {
-            "type": "object",
-            "properties": {
-                "playlist": {
-                    "type": "string",
-                    "enum": playlist_names,
-                    "description": "The playlist to start playing."
-                }
+        # Create a dynamic Pydantic model with the available playlists
+        PlaylistParams = type(
+            'PlaylistParams',
+            (StartPlaylistParams,),
+            {
+                '__annotations__': {'playlist': Literal[tuple(playlist_names)]},
+                'playlist': Field(description="The playlist to start playing.")
             }
-        }, lambda args, projected_states: self.start_playlist(args, projected_states, media_playback_method, helper), 'global')
+        )
 
-    def start_playlist(self, args, projected_states, media_playback_method: str, helper: PluginHelper) -> str:
+        helper.register_action(
+            'start_playlist',
+            "Start a music/media playlist by name",
+            PlaylistParams,
+            lambda model, context: self.start_playlist(model, helper),
+            'global'
+        )
+
+    def start_playlist(self, args: StartPlaylistParams, helper: PluginHelper) -> str:
+        media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
         if media_playback_method == "media_keys":
             # Start playlist using media keys
             pass
@@ -359,7 +354,7 @@ class MediaPlayerPlugin(PluginBase):
         # Temporary catch-all.
         # TODO: Expand this to support other media players
         log('debug', f"Current directory: {os.getcwd()}")
-        playlist_path: str = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists', f'{args["playlist"]}.m3u')
+        playlist_path: str = os.path.join(helper.get_plugin_data_path(self.plugin_manifest), 'playlists', f'{args.playlist}.m3u')
         log('debug', f"Playlist path: {playlist_path}")
         log('debug', f'Playlist file exists: {os.path.exists(playlist_path)}')
         if platform.system() == 'Darwin':       # macOS
@@ -369,52 +364,27 @@ class MediaPlayerPlugin(PluginBase):
         else:                                   # linux variants
             subprocess.call(('xdg-open', playlist_path))
 
-        return 'Started playlist: ' + args['playlist']
+        return 'Started playlist: ' + args.playlist
 
-    def media_player_state_status_generator(self, helper: PluginHelper, projected_states: dict[str, dict]) -> list[tuple[str, Any]]:
-        media_playback_method = self._get_media_playback_method(helper)
-        if media_playback_method != "system_wide":
-            log('debug', f'Media playback method is not system_wide ({media_playback_method}), skipping media player state status generation.')
-            return []
-        state = projected_states.get('CurrentMediaPlaybackState', {}).get('media_playback_state', {})
-        log('debug', f'Adding state to context: {state}')
-        return [
-            ('Current media player state', state)
-        ]
-
-    def media_player_should_reply_handler(self, helper: PluginHelper, event: Event, projected_states: dict[str, dict]) -> bool | None:
-        if isinstance(event, MediaPlaybackStateChangedEvent):
-            # Check if event.timestamp is within the last 5 seconds, mostly to avoid commenting on chat startup.
-            if datetime.now(timezone.utc).timestamp() - event.processed_at <= 5:
-                cur_state = cast(MediaPlaybackStateInner, projected_states.get('CurrentMediaPlaybackState', {}).get('media_playback_state', {})) or {}
-                if event.new_state == cur_state:  # Only handle event, if it's current.
-                    # Decide based on chance set in media_change_assistant_comments_chance setting.
-                    chance = cast(int, helper.get_plugin_setting('MediaPlayerPlugin', 'general', 'media_change_assistant_comments_chance') or self.DEFAULT_MEDIA_CHANGE_COMMENT_CHANCE)
-                    if chance == 0:
-                        return False
-                    if (random.random() * 100) < chance:
-                        return True
-                    return False
-        return None # No opinion. Let the AI decide.
-    
-    def _media_controller_on_media_playback_info_changed_handler(self, helper: PluginHelper, state: MediaPlaybackStateInner):
-        log('debug', 'New media state: ', state)
+    # "Shim" method. Might be moved to the base plugin class or the helper class, since it would be generally useful for any plugin that needs to update state based on external events.
+    SettingValueType = TypeVar('SettingValueType')
+    def get_setting(self, field_key: str, default_value: SettingValueType, cast_type: type[SettingValueType]) -> SettingValueType:
+        """
+        Get a plugin setting, from the settings field
         
-        event = MediaPlaybackStateChangedEvent(state)
-        helper.put_incoming_event(event) # Updates the projected state
+        Args:
+            field_key: The key of the field in the settings grid
+            default_value: The default value to return if the setting is not found
+            cast_type: The type to cast the setting value to
+            
+        Returns:
+            The value of the setting, cast to the specified type, or the default value if not set
+        """
+        field_value = self.settings.get(field_key, default_value)
 
-    def _get_media_playback_method(self, helper: PluginHelper) -> str:
-        return cast(str, helper.get_plugin_setting('MediaPlayerPlugin', 'general', 'media_playback_method')) or self.DEFAULT_PLAYBACK_METHOD
-    
-    def new_media_event_prompt_handler(self, event: Event, helper: PluginHelper) -> list[ChatCompletionMessageParam]:
-        if isinstance(event, MediaPlaybackStateChangedEvent):
-            log('debug', f'New media event: {event}')
-            # Create a message for the assistant
-            return [
-                {
-                    "role": "system",
-                    "content": f"New media playback state: {event.new_state}",
-                }
-            ]
-        return []
-    
+        if not isinstance(field_value, cast_type):
+            raise TypeError(
+                f"Expected {cast_type.__name__}, got {type(field_value).__name__}"
+            )
+
+        return field_value

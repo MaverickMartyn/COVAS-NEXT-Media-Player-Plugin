@@ -125,20 +125,19 @@ class WindowsMediaController(MediaControllerBase):
         media_properties = asyncio.run(self.wmsa_get_media_properties(self.current_session))
         if media_properties is None:
             return default_media_playback_state()
-        state = MediaPlaybackStateInner({
-            'artist': media_properties.artist,
-            'subtitle': media_properties.subtitle,
-            'title': media_properties.title,
-            'is_shuffle_active': None,
-            'auto_repeat_mode': None,
-            'playback_status': None
-            })
+        state = MediaPlaybackStateInner(
+            artist=media_properties.artist,
+            subtitle=media_properties.subtitle,
+            title=media_properties.title,
+            is_shuffle_active=None,
+            auto_repeat_mode=None,
+            playback_status=None)
         if hasattr(playback_info, 'is_shuffle_active'):
-            state['is_shuffle_active'] = playback_info.is_shuffle_active or None
+            state.is_shuffle_active = playback_info.is_shuffle_active or None
         if hasattr(playback_info, 'auto_repeat_mode'):
-            state['auto_repeat_mode'] = playback_info.auto_repeat_mode or None
+            state.auto_repeat_mode = playback_info.auto_repeat_mode or None
         if hasattr(playback_info, 'playback_status'):
-            state['playback_status'] = playback_info.playback_status.name
+            state.playback_status = playback_info.playback_status.name
         
         return state
 

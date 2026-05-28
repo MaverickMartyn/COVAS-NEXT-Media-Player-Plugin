@@ -4,15 +4,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Literal, TypedDict, final, override
 
+from pydantic import BaseModel
+
 from lib.Logger import log
 
-class MediaPlaybackStateInner(TypedDict):
-    artist: str | None
-    subtitle: str | None
-    title: str | None
-    is_shuffle_active: bool | None
-    auto_repeat_mode: str | None
-    playback_status: str | None
+class MediaPlaybackStateInner(BaseModel):
+    artist: str | None = None
+    subtitle: str | None = None
+    title: str | None = None
+    is_shuffle_active: bool | None = False
+    auto_repeat_mode: str | None = None
+    playback_status: str | None = None
 
 def default_media_playback_state() -> MediaPlaybackStateInner:
     return MediaPlaybackStateInner(
