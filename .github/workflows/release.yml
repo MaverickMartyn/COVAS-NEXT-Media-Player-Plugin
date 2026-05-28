@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
 
       - name: Rename artifact
-        run: Rename-Item -Path "dist\MediaPlayerPluginPlugin.zip" -NewName "MediaPlayerPlugin-${{ github.ref_name }}-windows.zip"
+        run: Rename-Item -Path "dist\MediaPlayerPlugin.zip" -NewName "MediaPlayerPlugin-${{ github.ref_name }}-windows.zip"
         shell: pwsh
 
       - name: Upload artifact
