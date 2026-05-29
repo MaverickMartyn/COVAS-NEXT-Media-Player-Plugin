@@ -159,39 +159,39 @@ class MPRISController(MediaControllerBase):
         asyncio.run_coroutine_threadsafe(coro, loop)
 
     @override
-    def play(self) -> bool:
+    def play(self) -> str:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_play())
-            return True
-        return False
+            return "Success."
+        return "Error: No player is set."
 
     @override
-    def pause(self) -> bool:
+    def pause(self) -> str:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_pause())
-            return True
-        return False
+            return "Success."
+        return "Error: No player is set."
 
     @override
-    def stop(self) -> bool:
+    def stop(self) -> str:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_stop())
-            return True
-        return False
+            return "Success."
+        return "Error: No player is set."
 
     @override
-    def prev_track(self) -> bool:
+    def prev_track(self) -> str:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_previous())
-            return True
-        return False
+            return "Success."
+        return "Error: No player is set."
 
     @override
-    def next_track(self) -> bool:
+    def next_track(self) -> str:
         if self._player_iface:
             self._run_coroutine_in_loop(self._loop, self._player_iface.call_next())
-            return True
-        return False
+            return "Success."
+        return "Error: No player is set."
 
     @override
     def get_media_playback_state(self) -> MediaPlaybackStateInner:
@@ -202,3 +202,6 @@ class MPRISController(MediaControllerBase):
         self._stop_event.set()
         self._poll_thread.join(timeout=2)
         self._loop.stop()
+
+    @override
+    def start_playlist(self, path: str) -> str: return "Playlist functionality has not been implemented for MPRISController." # Not implemented at this time.

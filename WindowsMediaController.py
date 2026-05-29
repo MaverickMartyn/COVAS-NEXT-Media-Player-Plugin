@@ -34,22 +34,45 @@ class WindowsMediaController(MediaControllerBase):
             self.playback_info_changed_token = self.current_session.add_playback_info_changed(lambda sender, event: self.playback_info_changed_handler())
     
     @override
-    def play(self): return asyncio.run(self._inner_play())
+    def play(self): 
+        if asyncio.run(self._inner_play()):
+            return "Success."
+        else:
+            return "An internal error occured in WindowsMediaController while executing 'play' action."
 
     @override
-    def pause(self): return asyncio.run(self._inner_pause())
+    def pause(self):
+        if asyncio.run(self._inner_pause()):
+            return "Success."
+        else:
+            return "An internal error occured in WindowsMediaController while executing 'pause' action."
 
     @override
-    def stop(self): return asyncio.run(self._inner_stop())
+    def stop(self):
+        if asyncio.run(self._inner_stop()):
+            return "Success."
+        else:
+            return "An internal error occured in WindowsMediaController while executing 'stop' action."
 
     @override
-    def prev_track(self): return asyncio.run(self._inner_prev_track())
+    def prev_track(self):
+        if asyncio.run(self._inner_prev_track()):
+            return "Success."
+        else:
+            return "An internal error occured in WindowsMediaController while executing 'prev_track' action."
 
     @override
-    def next_track(self): return asyncio.run(self._inner_next_track())
+    def next_track(self):
+        if asyncio.run(self._inner_next_track()):
+            return "Success."
+        else:
+            return "An internal error occured in WindowsMediaController while executing 'next_track' action."
 
     @override
     def get_media_playback_state(self) -> MediaPlaybackStateInner: return self.get_wmsa_state()
+
+    @override
+    def start_playlist(self, path: str) -> str: return "Playlist functionality has not been implemented for WindowsMediaController." # Not implemented at this time.
 
     @override
     def cleanup(self):
@@ -106,11 +129,9 @@ class WindowsMediaController(MediaControllerBase):
             self.playback_info_changed_handler()
 
     def playback_info_changed_handler(self):
-        log('debug', 'Playback info changed handler called.')
         state = self.get_wmsa_state()
 
         if self.last_media_playback_state == state:
-            log('debug', 'Playback state did not change, skipping notification.')
             return
         self.last_media_playback_state = state
 
@@ -130,8 +151,10 @@ class WindowsMediaController(MediaControllerBase):
             subtitle=media_properties.subtitle,
             title=media_properties.title,
             is_shuffle_active=None,
+            is_muted=None,
             auto_repeat_mode=None,
-            playback_status=None)
+            playback_status=None,
+            volume=None)
         if hasattr(playback_info, 'is_shuffle_active'):
             state.is_shuffle_active = playback_info.is_shuffle_active or None
         if hasattr(playback_info, 'auto_repeat_mode'):

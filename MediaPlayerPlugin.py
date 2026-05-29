@@ -7,6 +7,7 @@ from typing import Any, Literal, TypeVar, cast, override
 
 from pydantic import BaseModel, Field
 
+from lib.Config import save_config
 from lib.PluginHelper import PluginEvent, PluginHelper, ProjectedStates
 from lib.PluginSettingDefinitions import (
     PluginSettings, SettingsGrid, SelectOption, TextAreaSetting, TextSetting, SelectSetting, NumericalSetting, ToggleSetting, ParagraphSetting
@@ -17,6 +18,11 @@ from .Projections.CurrentMediaPlaybackState import CurrentMediaPlaybackState
 from .ActionParams.MediaPlayerActionParams import MediaPlayerActionParams
 from .ActionParams.PressMediaKeyParams import PressMediaKeyParams
 from .ActionParams.StartPlaylistParams import StartPlaylistParams
+from .ActionParams.YTMSearchActionParams import YTMSearchActionParams
+from .ActionParams.YTMSetVolumeParams import YTMSetVolumeParams
+from .ActionParams.YTMSetRepeatModeParams import YTMSetRepeatModeParams
+from .ActionParams.YTMSetMuteParams import YTMSetMuteParams
+from .ActionParams.YTMSetTrackOpinionParams import YTMSetTrackOpinionParams
 from .MediaControllerTypes import MediaControllerBase, MediaPlaybackStateInner
 from .MediaControllers import get_platform_controller
 
@@ -54,7 +60,7 @@ class MediaPlayerPlugin(PluginBase):
                                     + "The system-wide integration uses native APIs, depending on the platform, to query emdia information and control playback.<br />"
                                     + "Deeper integration with other media players are available.<br />"
                                     + "If you want to use the media keys, select Media Keys. This will work with almost anything, but provides no media meta data.<br />"
-                                    + "Note: Changing this setting will require restarting the assistant."
+                                    + "<b>Note: Changing this setting will require restarting COVAS:NEXT.</b>"
                         ),
                         SelectSetting(
                             key="media_playback_method",
@@ -67,6 +73,7 @@ class MediaPlayerPlugin(PluginBase):
                                 SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
                                 SelectOption(key="system_wide", label="Generic System-Wide Integration", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
                                 SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
+                                SelectOption(key="ytm", label="YouTube Music Desktop Player", value="ytm", disabled=False),
                                 SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
                                 SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
                                 SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
@@ -75,7 +82,7 @@ class MediaPlayerPlugin(PluginBase):
                         ),
                         ParagraphSetting(
                             key="media_change_assistant_comments_description",
-                            label="Assistant Comments (Only available for Generic System-Wide Integration)",
+                            label="Assistant Comments (Not available for Media Keys-only integration)",
                             type="paragraph",
                             readonly = False,
                             placeholder = None,
@@ -103,6 +110,35 @@ class MediaPlayerPlugin(PluginBase):
     def on_chat_start(self, helper: PluginHelper):
         media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
 
+        # Register projections
+        if media_playback_method in ["system_wide", "ytm"]:
+            self._playback_state_projection = CurrentMediaPlaybackState()
+            helper.register_projection(self._playback_state_projection)
+
+        # Media controller initialization
+        if media_playback_method in ["system_wide", "ytm"]:
+            if media_playback_method == "system_wide":
+                self._media_controller = get_platform_controller()
+            else: # YTM Desktop Player
+                ytm_token: str | None = self.get_setting("ytm_token", "", str)
+                if ytm_token == "":
+                    ytm_token = None 
+                from .YTMController import YTMController
+                from slugify import slugify
+                slug = slugify(text=self.plugin_manifest.name)
+                self._media_controller = YTMController(ytm_token, slug, self.plugin_manifest.name, self.plugin_manifest.version, lambda token: self.ytm_token_changed(helper, token))
+
+            projection = self._playback_state_projection
+            if projection is not None:
+                current_state = self._media_controller.get_media_playback_state()
+                log('debug', f"Found previous track info on startup")
+                if projection.state != current_state:
+                    self._media_controller_on_media_playback_info_changed_handler(helper, current_state)
+                    log('debug', f"Updated current track on startup")
+            
+            self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
+            log('debug', f"Media controller initialized{self.plugin_manifest.name}")
+
         # Register actions
         if media_playback_method == "media_keys":
             # Register media keys actions
@@ -113,6 +149,9 @@ class MediaPlayerPlugin(PluginBase):
         elif media_playback_method == "mpv":
             # Register MPV actions
             self.register_mpv_actions(helper)
+        elif media_playback_method == "ytm":
+            # Register YTM actions
+            self.register_ytm_actions(helper)
         elif media_playback_method == "vlc":
             # Register VLC actions
             self.register_vlc_actions(helper)
@@ -128,34 +167,16 @@ class MediaPlayerPlugin(PluginBase):
         log('debug', f"Actions registered for {self.plugin_manifest.name}")
 
         # Register events
-        if media_playback_method == "system_wide":
+        if media_playback_method in ["system_wide", "ytm"]:
             helper.register_event('MediaPlaybackStateChangedEvent', should_reply_check=self.media_player_should_reply_handler, prompt_generator=self.new_media_event_prompt_handler)
             log('debug', 'Registered media playback state changed event.')
         
         log('debug', f"Events registered for {self.plugin_manifest.name}")
-
-        # Register projections
-        if media_playback_method == "system_wide":
-            self._playback_state_projection = CurrentMediaPlaybackState()
-            helper.register_projection(self._playback_state_projection)
             
         # Register status generators
-        if media_playback_method == "system_wide":
+        if media_playback_method in ["system_wide", "ytm"]:
             helper.register_status_generator(self.media_player_state_status_generator)
             #lambda states: [("DemoProjectionValue", "The current demosaicing value is " + str(states.get("DemoProjection").value) if states.get("DemoProjection") else None)]
-
-        if media_playback_method == "system_wide":
-            self._media_controller = get_platform_controller()
-            projection = self._playback_state_projection
-            if projection is not None:
-                current_state = self._media_controller.get_media_playback_state()
-                log('debug', f"Found previous track info on startup")
-                if projection.state != current_state:
-                    self._media_controller_on_media_playback_info_changed_handler(helper, current_state)
-                    log('debug', f"Updated current track on startup")
-            
-            self._media_controller.on_media_playback_info_changed = lambda state: self._media_controller_on_media_playback_info_changed_handler(helper, state)
-            log('debug', f"Media controller initialized{self.plugin_manifest.name}")
 
         pass
     
@@ -220,8 +241,8 @@ class MediaPlayerPlugin(PluginBase):
 
     def media_player_state_status_generator(self, projected_states: ProjectedStates) -> list[tuple[str, Any]]:
         media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
-        if media_playback_method != "system_wide":
-            log('debug', f'Media playback method is not system_wide ({media_playback_method}), skipping media player state status generation.')
+        if media_playback_method not in ["system_wide", "ytm"]:
+            log('debug', f'Media playback method is not system_wide or ytm ({media_playback_method}), skipping media player state status generation.')
             return []
         state = projected_states.get('CurrentMediaPlaybackState', None)
         log('debug', f'Adding state to context: {state}')
@@ -235,24 +256,86 @@ class MediaPlayerPlugin(PluginBase):
         if self._media_controller is None:
             return "Error: Media controller is not initialized, despite using generic media integration. This should not happen."
 
-        success: bool = False
         if args.action == "play":
-            success = self._media_controller.play()
+            return self._media_controller.play()
         elif args.action == "pause":
-            success = self._media_controller.pause()
+            return self._media_controller.pause()
         elif args.action == "next":
-            success = self._media_controller.next_track()
+            return self._media_controller.next_track()
         elif args.action == "previous":
-            success = self._media_controller.prev_track()
+            return self._media_controller.prev_track()
         elif args.action == "stop":
-            success = self._media_controller.stop()
+            return self._media_controller.stop()
         else:
             return "Error: Invalid action specified."
 
-        if not success:
-            return "Error: Failed to activate Windows Media Session API action: " + args.action
+    def ytm_media_action(self, args: MediaPlayerActionParams, projected_states: ProjectedStates) -> str:
+        log('debug', 'Activating MPV action: ', args)
+        action: str | None = args.action
+
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using generic media integration. This should not happen."
+
+        if action == "play":
+            return self._media_controller.play()
+        elif action == "pause":
+            return self._media_controller.pause()
+        elif action == "next":
+            return self._media_controller.next_track()
+        elif action == "previous":
+            return self._media_controller.prev_track()
+        elif action == "stop":
+            return self._media_controller.stop()
+
+    def ytm_media_player_play_by_search(self, args: YTMSearchActionParams, projected_states: ProjectedStates) -> str:
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using YTM integration. This should not happen."
+
+        from .YTMController import YTMController
+        if not isinstance(self._media_controller, YTMController):
+            return f"Error: Media controller is an unexpected type: {self._media_controller.__class__.__name__}. Expected YTMController."
+        
+        return self._media_controller.play_by_search(args.query)
+
+    def ytm_media_player_set_volume(self, args: YTMSetVolumeParams, projected_states: ProjectedStates) -> str:
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using YTM integration. This should not happen."
+
+        from .YTMController import YTMController
+        if not isinstance(self._media_controller, YTMController):
+            return f"Error: Media controller is an unexpected type: {self._media_controller.__class__.__name__}. Expected YTMController."
+        
+        return self._media_controller.set_volume(args.level)
             
-        return "Activated Windows Media Session API action: " + args.action
+    def ytm_media_player_set_repeat_mode(self, args: YTMSetRepeatModeParams, projected_states: ProjectedStates) -> str:
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using YTM integration. This should not happen."
+
+        from .YTMController import YTMController
+        if not isinstance(self._media_controller, YTMController):
+            return f"Error: Media controller is an unexpected type: {self._media_controller.__class__.__name__}. Expected YTMController."
+        
+        return self._media_controller.set_repeat_mode(args.repeat_mode)
+            
+    def ytm_media_player_set_mute(self, args: YTMSetMuteParams, projected_states: ProjectedStates) -> str:
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using YTM integration. This should not happen."
+
+        from .YTMController import YTMController
+        if not isinstance(self._media_controller, YTMController):
+            return f"Error: Media controller is an unexpected type: {self._media_controller.__class__.__name__}. Expected YTMController."
+        
+        return self._media_controller.set_mute(args.muted)
+            
+    def ytm_media_player_set_track_opinion(self, args: YTMSetTrackOpinionParams, projected_states: ProjectedStates) -> str:
+        if self._media_controller is None:
+            return "Error: Media controller is not initialized, despite using YTM integration. This should not happen."
+
+        from .YTMController import YTMController
+        if not isinstance(self._media_controller, YTMController):
+            return f"Error: Media controller is an unexpected type: {self._media_controller.__class__.__name__}. Expected YTMController."
+        
+        return self._media_controller.set_opinion(args.opinion)
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings
@@ -290,6 +373,58 @@ class MediaPlayerPlugin(PluginBase):
         # Use https://pypi.org/project/mpv-python/
         pass
 
+    def register_ytm_actions(self, helper: PluginHelper):
+        # Register YouTube Music media player actions
+        # Use https://pypi.org/project/ytmusicapi/
+
+        helper.register_action(
+            'media_player_action',
+            "Media/Music control. Play/pause/next/previous/stop",
+            MediaPlayerActionParams,
+            self.ytm_media_action,
+            'global'
+        )
+
+        helper.register_action(
+            'media_player_play_by_search',
+            "Searches for and plays songs, albums and playlists by title, artist and more. Starts playing the first result.",
+            YTMSearchActionParams,
+            self.ytm_media_player_play_by_search,
+            'global'
+        )
+
+        helper.register_action(
+            'media_player_set_volume',
+            "Sets the volume to a given percentage. Valid values: 0-100.",
+            YTMSetVolumeParams,
+            self.ytm_media_player_set_volume,
+            'global'
+        )
+
+        helper.register_action(
+            'media_player_set_repeat_mode',
+            "Sets the media repeat mode.",
+            YTMSetRepeatModeParams,
+            self.ytm_media_player_set_repeat_mode,
+            'global'
+        )
+
+        helper.register_action(
+            'media_player_set_is_muted',
+            "Mutes or unmutes media playback.",
+            YTMSetMuteParams,
+            self.ytm_media_player_set_mute,
+            'global'
+        )
+
+        helper.register_action(
+            'media_player_set_track_opinion',
+            "Sets the user's like-/dislike-status on the currently playing track.",
+            YTMSetTrackOpinionParams,
+            self.ytm_media_player_set_track_opinion,
+            'global'
+        )
+
     def register_vlc_actions(self, helper: PluginHelper):
         # Register VLC media player actions
         # Use https://pypi.org/project/python-vlc/
@@ -307,9 +442,15 @@ class MediaPlayerPlugin(PluginBase):
         if not os.path.exists(playlists_path):
             os.makedirs(playlists_path)
 
-        files = os.listdir(playlists_path)
-        files = list(filter(lambda x: x.endswith('.m3u'), files))
-        playlist_names = list(map(lambda x: x[:-4], files))
+        playlist_names: list[str] = []
+        media_playback_method = self.get_setting("media_playback_method", self.DEFAULT_PLAYBACK_METHOD, str)
+        if media_playback_method != "ytm":
+            files = os.listdir(playlists_path)
+            files = list(filter(lambda x: x.endswith('.m3u'), files))
+            playlist_names = list(map(lambda x: x[:-4], files))
+        else:
+            playlists = self.get_ytm_playlists()
+            playlist_names = list(map(lambda x: x['title'], playlists))
         log('debug', f"Discovered playlist names: {playlist_names}")
         if not playlist_names:
             log('debug', 'No playlists found, skipping playlist action registration.')
@@ -344,6 +485,15 @@ class MediaPlayerPlugin(PluginBase):
         elif media_playback_method == "mpv":
             # Start playlist using MPV
             pass
+        elif media_playback_method == "ytm":
+            # Start playlist using YouTube Music Desktop Player
+            if self._media_controller is not None:
+                return_val = self._media_controller.start_playlist(args.playlist)
+                if return_val != "Success.":
+                    return return_val
+            else:
+                log('debug', 'YouTube Desktop Player Player controller is None. This is not supposed to happen.')
+            return 'Started playlist: ' + args.playlist
         elif media_playback_method == "vlc":
             # Start playlist using VLC
             pass
@@ -368,6 +518,15 @@ class MediaPlayerPlugin(PluginBase):
             subprocess.call(('xdg-open', playlist_path))
 
         return 'Started playlist: ' + args.playlist
+    
+    def ytm_token_changed(self, helper: PluginHelper, access_token: str):
+        self.set_setting(helper, 'ytm_token', access_token)
+
+    def get_ytm_playlists(self) -> list[dict[str, str]]:
+        from .YTMController import YTMController
+        if isinstance(self._media_controller, YTMController):
+            return self._media_controller.get_playlists()
+        return []
 
     # "Shim" method. Might be moved to the base plugin class or the helper class, since it would be generally useful for any plugin that needs to update state based on external events.
     SettingValueType = TypeVar('SettingValueType')
@@ -391,3 +550,15 @@ class MediaPlayerPlugin(PluginBase):
             )
 
         return field_value
+
+    # "Shim" method. Might be moved to the base plugin class or the helper class, since it would be generally useful for any plugin that needs to update state based on external events.
+    def set_setting(self, helper: PluginHelper, field_key: str, value: Any):
+        """
+        Set a plugin setting, and update the settings field
+        
+        Args:
+            field_key: The key of the field in the settings grid
+            value: The value to set the setting to
+        """
+        helper._config["plugin_settings"][self.plugin_manifest.guid][field_key] = value
+        save_config(helper._config)
