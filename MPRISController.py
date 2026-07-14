@@ -1,7 +1,13 @@
-import json
+from math import floor
+
+from plugins.MediaPlayer.MediaControllerTypes import MediaPlaybackStateInner
+
 import dbus_next
-from dbus_next.introspection import Interface, Node
-from dbus_next.aio.proxy_object import ProxyInterface, ProxyObject
+from dbus_next.aio.message_bus import MessageBus
+import json
+from dbus_next import message
+from dbus_next.constants import MessageType
+
 import platform
 import asyncio
 import sys
@@ -18,19 +24,6 @@ else:
 
 import time
 
-class MprisPlayerInterface(ProxyInterface):
-    async def call_play(self) -> None: ...
-    async def call_stop(self) -> None: ...
-    async def call_pause(self) -> None: ...
-    async def call_next(self) -> None: ...
-    async def call_previous(self) -> None: ...
-    async def get_playback_status(self) -> str: ...
-    async def get_metadata(self) -> Any: ...
-    async def get_loop_status(self) -> str | None: ...
-    async def get_shuffle(self) -> bool: ...
-    async def call_list_names(self) -> list[str]: ...
-
-
 class MPRISController(MediaControllerBase):
     def __init__(self):
         super().__init__()
@@ -38,158 +31,228 @@ class MPRISController(MediaControllerBase):
             log('error', 'MPRISController requires dbus-next, which is not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
 
-        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
-        self._stop_event: Event = Event()
         self._last_state: Optional[MediaPlaybackStateInner] = None
-        self._player_iface: MprisPlayerInterface | None = None
-
-        self._poll_thread: Thread = Thread(target=self._run, daemon=True)
-        self._poll_thread.start()
-
-    def _run(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._init_player())
-        while not self._stop_event.is_set():
-            self._loop.run_until_complete(self._poll())
-            time.sleep(1)
+        self._current_player_name: str | None = None
 
     async def _init_player(self):
         if not MessageBus:
             log('error', 'MPRISController requires dbus-next, which is not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
-        
+
         self._bus = await MessageBus().connect()
-        names = await self._list_names()
-        mpris_names = [name for name in names if name.startswith("org.mpris.MediaPlayer2.")]
+
+        reply = await self._bus.call(
+            message.Message(
+                destination="org.freedesktop.DBus",
+                path="/org/freedesktop/DBus",
+                interface="org.freedesktop.DBus",
+                member="ListNames"
+            )
+        )
+
+        if reply is None:
+            log('error', 'Failed to retrieve MPRIS names from D-Bus.')
+            raise RuntimeError("Failed to retrieve MPRIS names from D-Bus.")
+
+        mpris_names = [
+            name
+            for name in reply.body[0]
+            if name.startswith("org.mpris.MediaPlayer2.")
+        ]
         log('debug', f'MPRIS names found: {mpris_names}')
+        status: str | None = None
+        
         for name in mpris_names:
             try:
-                introspection: Node = await self._bus.introspect(name, "/org/mpris/MediaPlayer2")
-                proxy_obj: ProxyObject = self._bus.get_proxy_object(name, "/org/mpris/MediaPlayer2", introspection)
-                player_iface: MprisPlayerInterface = cast(MprisPlayerInterface, proxy_obj.get_interface("org.mpris.MediaPlayer2.Player"))
-                
-                status: str = await player_iface.get_playback_status()
+                status = await self._get_property(
+                    service=name,
+                    interface="org.mpris.MediaPlayer2.Player",
+                    property_name="PlaybackStatus"
+                )
                 log('debug', f'Player {name} status: {status}')
                 if status == "Playing":
-                    self._player_iface = player_iface
+                    self._current_player_name = name
                     return
             except Exception:
-                log('debug', f'Failed to introspect or get player interface for {name}, continuing...')
+                log('debug', f'Failed to get current playback status for {name}, continuing...')
                 log('debug', f'Exception details: {sys.exc_info()[1]}')
                 continue
         # fallback to first player found
         if mpris_names:
             log('debug', 'No active MPRIS player found, using the first available player.')
-            introspection = await self._bus.introspect(mpris_names[0], "/org/mpris/MediaPlayer2")
-            proxy_obj = self._bus.get_proxy_object(mpris_names[0], "/org/mpris/MediaPlayer2", introspection)
-            self._player_iface = cast(MprisPlayerInterface, proxy_obj.get_interface("org.mpris.MediaPlayer2.Player"))
+            self._current_player_name = mpris_names[0]
+            if self._current_player_name:
+                status = await self._get_property(
+                    service=self._current_player_name,
+                    interface="org.mpris.MediaPlayer2.Player",
+                    property_name="PlaybackStatus"
+                )
 
-    async def _list_names(self) -> list[str]:
-        introspection = await self._bus.introspect(bus_name="org.freedesktop.DBus", path="/org/freedesktop/DBus")
-        proxy = self._bus.get_proxy_object("org.freedesktop.DBus", "/org/freedesktop/DBus", introspection)
-        iface = cast(MprisPlayerInterface, proxy.get_interface("org.freedesktop.DBus"))
-        return await iface.call_list_names()
+        # Add a message handler to listen for property changes
+        self._bus.add_message_handler(self._on_message)
 
-    async def _poll(self):
-        if not self._player_iface:
-            return
-        try:
-            state = await self._get_media_playback_state()
-            if state != self._last_state:
-                log('debug', f'Media playback state changed: {state}')
-                self._last_state = state
-                if self.on_media_playback_info_changed:
-                    self.on_media_playback_info_changed(state)
-        except Exception:
-            log('error', 'Error while polling media playback state')
-            log('debug', f'Exception details: {sys.exc_info()[1]}')
-            pass
-
-    async def _get_media_playback_state(self) -> MediaPlaybackStateInner:
-        if not self._player_iface:
-            log('debug', 'No player interface available, returning default state')
-            return default_media_playback_state()
-        try:
-            metadata = await self._player_iface.get_metadata()
-            playback_status = await self._player_iface.get_playback_status()
-
-            # Fix the Shuffle property, since VLC is being stupid.
-            introspection: Node = self._player_iface.introspection
-            for prop in introspection.properties:
-                # log('debug', vars(prop))
-                if prop.name == "Shuffle" and prop.signature == "d":
-                    # log('debug', f'Found Incorrect Shuffle property: {prop.name} with type {prop.signature}. Fixing to boolean.')
-                    # Fix the type of Shuffle property to boolean
-                    prop.signature = "b"
-                    
-            shuffle = cast(bool, await self._player_iface.get_shuffle()) if hasattr(self._player_iface, 'get_shuffle') else None
-            # if hasattr(self._player_iface, 'get_shuffle'):
-            #     log('debug', f'get_shuffle: {shuffle}')
-            loop_status = await self._player_iface.get_loop_status() if hasattr(self._player_iface, 'get_loop_status') else None
-            # shuffle = False
-            # loop_status = None
+        # Set current playback state
+        if self._current_player_name:
+            metadata = await self._get_property(
+                service=self._current_player_name,
+                interface="org.mpris.MediaPlayer2.Player",
+                property_name="Metadata"
+            )
+            
+            shuffle: bool | None = await self._get_property(
+                service=self._current_player_name,
+                interface="org.mpris.MediaPlayer2.Player",
+                property_name="Shuffle"
+            )
+            loop_status: str | None = await self._get_property(
+                service=self._current_player_name,
+                interface="org.mpris.MediaPlayer2.Player",
+                property_name="LoopStatus"
+            )
+            volume: float | None = await self._get_property(
+                service=self._current_player_name,
+                interface="org.mpris.MediaPlayer2.Player",
+                property_name="Volume"
+            )
             artists_list = cast(list[str], (cast(dbus_next.signature.Variant, metadata.get("xesam:artist")) or {"value":None}).value)
-
             # Concatenate artists
             artists = ', '.join(artists_list) if artists_list else None
 
-            return MediaPlaybackStateInner(
-                artist=artists,
-                subtitle=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:album")) or {"value":None}).value),
-                title=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:title")) or {"value":None}).value),
-                is_shuffle_active=bool(shuffle) if shuffle is not None else None,
-                auto_repeat_mode=loop_status,
-                playback_status=playback_status
+            self._last_state =  MediaPlaybackStateInner(
+                        artist=artists or self._last_state.artist if self._last_state else None,
+                        subtitle=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:album")) or {"value":None}).value),
+                        title=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:title")) or {"value":None}).value),
+                        is_shuffle_active=bool(shuffle) if shuffle is not None else None,
+                        auto_repeat_mode=loop_status,
+                        playback_status=status
+                    )
+
+    def _on_message(self, msg: message.Message) -> message.Message | bool | None:
+        if msg.message_type == MessageType.SIGNAL and msg.interface == "org.freedesktop.DBus.Properties" and msg.member == "PropertiesChanged":
+            if msg.body[0] == "org.mpris.MediaPlayer2.Player":
+                changed_properties = msg.body[1]
+                if changed_properties:
+                    if self._last_state is None:
+                        self._last_state = default_media_playback_state()
+
+                    if "PlaybackStatus" in changed_properties:
+                        self._last_state.playback_status = changed_properties["PlaybackStatus"].value
+
+                    if "Metadata" in changed_properties:
+                        metadata = changed_properties["Metadata"].value
+                        shuffle: bool | None = None
+                        loop_status: str | None = None
+                        artists_list = cast(list[str], (cast(dbus_next.signature.Variant, metadata.get("xesam:artist")) or {"value":None}).value)
+
+                        # Concatenate artists
+                        artists = ', '.join(artists_list) if artists_list else None
+
+                        self._last_state.artist=artists
+                        self._last_state.subtitle=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:album")) or {"value":None}).value)
+                        self._last_state.title=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:title")) or {"value":None}).value)
+                        self._last_state.is_shuffle_active=bool(shuffle) if shuffle is not None else None
+                        self._last_state.auto_repeat_mode=loop_status
+
+                    if self.on_media_playback_info_changed:
+                        self.on_media_playback_info_changed(self._last_state)
+                    return True
+        return False
+
+    async def _get_property(
+        self,
+        service: str,
+        interface: str,
+        property_name: str
+    ):
+        reply = await self._bus.call(
+            message.Message(
+                destination=service,
+                path="/org/mpris/MediaPlayer2",
+                interface="org.freedesktop.DBus.Properties",
+                member="Get",
+                signature="ss",
+                body=[
+                    interface,
+                    property_name
+                ]
             )
-        except Exception:
-            log('error', 'Error getting media playback state')
-            log('debug', f'Exception details: {sys.exc_info()[1]}')
-            # Print exception location for debugging
-            log('debug', f'Exception location: {sys.exc_info()[2].tb_frame.f_code.co_filename}:{sys.exc_info()[2].tb_lineno}')
-            return default_media_playback_state()
-
-    # async def _safe_get_property(self, prop):
-    #     try:
-    #         return await self._player_iface.get_property(prop)
-    #     except Exception:
-    #         return None
-
-    @staticmethod
-    def _run_coroutine_in_loop(loop: asyncio.AbstractEventLoop, coro) -> None:
-        asyncio.run_coroutine_threadsafe(coro, loop)
+        )
+        if reply is None:
+            log('error', f'Failed to retrieve property {property_name} from {service}.')
+            raise RuntimeError(f"Failed to retrieve property {property_name} from {service}.")
+        return reply.body[0].value;
+    
+    async def _call_player_method(
+        self,
+        service,
+        method,
+        signature="",
+        body=None
+    ):
+        if body is None:
+            body = []
+        reply = await self._bus.call(
+            message.Message(
+                destination=service,
+                path="/org/mpris/MediaPlayer2",
+                interface="org.mpris.MediaPlayer2.Player",
+                member=method,
+                signature=signature,
+                body=body
+            )
+        )
+        if reply is None:
+            log('error', f'Failed to call method {method} on {service}.')
+            raise RuntimeError(f"Failed to call method {method} on {service}.")
+        return reply.body
 
     @override
     def play(self) -> bool:
-        if self._player_iface:
-            self._run_coroutine_in_loop(self._loop, self._player_iface.call_play())
+        if self._current_player_name:
+            asyncio.run(self._call_player_method(
+                service=self._current_player_name,
+                method="Play"
+            ))
             return True
         return False
 
     @override
     def pause(self) -> bool:
-        if self._player_iface:
-            self._run_coroutine_in_loop(self._loop, self._player_iface.call_pause())
+        if self._current_player_name:
+            asyncio.run(self._call_player_method(
+                service=self._current_player_name,
+                method="Pause"
+            ))
             return True
         return False
 
     @override
     def stop(self) -> bool:
-        if self._player_iface:
-            self._run_coroutine_in_loop(self._loop, self._player_iface.call_stop())
+        if self._current_player_name:
+            asyncio.run(self._call_player_method(
+                service=self._current_player_name,
+                method="Stop"
+            ))
             return True
         return False
 
     @override
     def prev_track(self) -> bool:
-        if self._player_iface:
-            self._run_coroutine_in_loop(self._loop, self._player_iface.call_previous())
+        if self._current_player_name:
+            asyncio.run(self._call_player_method(
+                service=self._current_player_name,
+                method="Previous"
+            ))
             return True
         return False
 
     @override
     def next_track(self) -> bool:
-        if self._player_iface:
-            self._run_coroutine_in_loop(self._loop, self._player_iface.call_next())
+        if self._current_player_name:
+            asyncio.run(self._call_player_method(
+                service=self._current_player_name,
+                method="Next"
+            ))
             return True
         return False
 
@@ -199,6 +262,7 @@ class MPRISController(MediaControllerBase):
 
     @override
     def cleanup(self):
-        self._stop_event.set()
-        self._poll_thread.join(timeout=2)
-        self._loop.stop()
+        pass
+        # self._stop_event.set()
+        # self._poll_thread.join(timeout=2)
+        # self._loop.stop()
