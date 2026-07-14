@@ -1,7 +1,4 @@
 from math import floor
-
-from plugins.MediaPlayer.MediaControllerTypes import MediaPlaybackStateInner
-
 import dbus_next
 from dbus_next.aio.message_bus import MessageBus
 import json
