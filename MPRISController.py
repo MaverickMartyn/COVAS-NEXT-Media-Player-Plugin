@@ -28,8 +28,13 @@ class MPRISController(MediaControllerBase):
             log('error', 'MPRISController requires dbus-next, which is not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
 
+        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._stop_event: Event = Event()
+
         self._last_state: Optional[MediaPlaybackStateInner] = None
         self._current_player_name: str | None = None
+        
+        asyncio.run(self._init_player())
 
     async def _init_player(self):
         if not MessageBus:
@@ -177,7 +182,8 @@ class MPRISController(MediaControllerBase):
         if reply is None:
             log('error', f'Failed to retrieve property {property_name} from {service}.')
             raise RuntimeError(f"Failed to retrieve property {property_name} from {service}.")
-        return reply.body[0].value;
+        log('debug', f'Successfully retrieved property {property_name} from {service}. Value: {reply.body}')
+        return reply.body;
     
     async def _call_player_method(
         self,
