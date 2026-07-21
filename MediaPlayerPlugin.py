@@ -175,7 +175,7 @@ class MediaPlayerPlugin(PluginBase):
 
     def new_media_event_prompt_handler(self, event: PluginEvent) -> str:
         log('debug', f'New media event: {event}')
-        if (event.plugin_event_name == "MediaPlaybackStateChangedEvent"):
+        if (event.plugin_event_name != "MediaPlaybackStateChangedEvent"):
             raise ValueError("This prompt handler is only for media playback state changed events.")
         log('debug', f'New media event: {event}')
         # Create a message for the assistant
@@ -184,7 +184,7 @@ class MediaPlayerPlugin(PluginBase):
             
 
     def media_player_should_reply_handler(self, event: PluginEvent) -> bool:
-        log('debug', 'new_media_event_prompt_handler triggered', event)
+        log('debug', 'media_player_should_reply_handler triggered', event)
         if event.plugin_event_name != 'MediaPlaybackStateChangedEvent':
             raise ValueError("This should_reply handler is only for media playback state changed events.")
 
@@ -250,9 +250,9 @@ class MediaPlayerPlugin(PluginBase):
             return "Error: Invalid action specified."
 
         if not success:
-            return "Error: Failed to activate Windows Media Session API action: " + args.action
+            return "Error: Failed to activate System-Wide Media action: " + args.action
             
-        return "Activated Windows Media Session API action: " + args.action
+        return "Activated System-Wide Media action: " + args.action
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings

@@ -1,3 +1,4 @@
+from dbus_next.message import Message
 from math import floor
 import dbus_next
 from dbus_next.aio.message_bus import MessageBus
@@ -10,6 +11,7 @@ import asyncio
 import sys
 from threading import Thread, Event
 from typing import Any, List, Optional, cast, override
+
 from .MediaControllerTypes import MediaPlaybackStateInner, default_media_playback_state, MediaControllerBase
 from lib.Logger import log
 
@@ -30,13 +32,22 @@ class MPRISController(MediaControllerBase):
 
         self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
         self._stop_event: Event = Event()
+        self._thread = Thread(target=self._run_loop, daemon=True)
 
         self._last_state: Optional[MediaPlaybackStateInner] = None
         self._current_player_name: str | None = None
         
-        asyncio.run(self._init_player())
+        log('debug', 'Starting MPRISController event loop thread.')
+        self._thread.start()
+        asyncio.run_coroutine_threadsafe(self._init_player(), self._loop).result(timeout=10)
+        log('debug', 'MPRISController initialized.')
+
+    def _run_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
 
     async def _init_player(self):
+        log('debug', 'Executing _init_player()')
         if not MessageBus:
             log('error', 'MPRISController requires dbus-next, which is not available on this platform.')
             raise NotImplementedError("MPRISController is not implemented for this platform.")
@@ -74,13 +85,14 @@ class MPRISController(MediaControllerBase):
                 log('debug', f'Player {name} status: {status}')
                 if status == "Playing":
                     self._current_player_name = name
-                    return
+                    break
             except Exception:
                 log('debug', f'Failed to get current playback status for {name}, continuing...')
                 log('debug', f'Exception details: {sys.exc_info()[1]}')
                 continue
+            
         # fallback to first player found
-        if mpris_names:
+        if self._current_player_name is None and mpris_names:
             log('debug', 'No active MPRIS player found, using the first available player.')
             self._current_player_name = mpris_names[0]
             if self._current_player_name:
@@ -91,6 +103,16 @@ class MPRISController(MediaControllerBase):
                 )
 
         # Add a message handler to listen for property changes
+        await self._bus.call(
+            message.Message(
+                destination="org.freedesktop.DBus",
+                path="/org/freedesktop/DBus",
+                interface="org.freedesktop.DBus",
+                member="AddMatch",
+                signature="s",
+                body=["type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='/org/mpris/MediaPlayer2',arg0='org.mpris.MediaPlayer2.Player'"]
+            )
+        )
         self._bus.add_message_handler(self._on_message)
 
         # Set current playback state
@@ -130,6 +152,7 @@ class MPRISController(MediaControllerBase):
                     )
 
     def _on_message(self, msg: message.Message) -> message.Message | bool | None:
+        log('debug', f'Received D-Bus message: {msg.message_type}, {msg.interface}, {msg.member}, {msg.body}')
         if msg.message_type == MessageType.SIGNAL and msg.interface == "org.freedesktop.DBus.Properties" and msg.member == "PropertiesChanged":
             if msg.body[0] == "org.mpris.MediaPlayer2.Player":
                 changed_properties = msg.body[1]
@@ -165,8 +188,8 @@ class MPRISController(MediaControllerBase):
         service: str,
         interface: str,
         property_name: str
-    ):
-        reply = await self._bus.call(
+    ) -> Any:
+        reply: Message | None = await self._bus.call(
             message.Message(
                 destination=service,
                 path="/org/mpris/MediaPlayer2",
@@ -183,7 +206,7 @@ class MPRISController(MediaControllerBase):
             log('error', f'Failed to retrieve property {property_name} from {service}.')
             raise RuntimeError(f"Failed to retrieve property {property_name} from {service}.")
         log('debug', f'Successfully retrieved property {property_name} from {service}. Value: {reply.body}')
-        return reply.body;
+        return reply.body[0].value;
     
     async def _call_player_method(
         self,
@@ -212,50 +235,51 @@ class MPRISController(MediaControllerBase):
     @override
     def play(self) -> bool:
         if self._current_player_name:
-            asyncio.run(self._call_player_method(
+            retVal = asyncio.run_coroutine_threadsafe(self._call_player_method(
                 service=self._current_player_name,
                 method="Play"
-            ))
+            ), self._loop)
+            log('debug', f'Play command sent to {self._current_player_name}, result: {retVal}')
             return True
         return False
 
     @override
     def pause(self) -> bool:
         if self._current_player_name:
-            asyncio.run(self._call_player_method(
+            asyncio.run_coroutine_threadsafe(self._call_player_method(
                 service=self._current_player_name,
                 method="Pause"
-            ))
+            ), self._loop)
             return True
         return False
 
     @override
     def stop(self) -> bool:
         if self._current_player_name:
-            asyncio.run(self._call_player_method(
+            asyncio.run_coroutine_threadsafe(self._call_player_method(
                 service=self._current_player_name,
                 method="Stop"
-            ))
+            ), self._loop)
             return True
         return False
 
     @override
     def prev_track(self) -> bool:
         if self._current_player_name:
-            asyncio.run(self._call_player_method(
+            asyncio.run_coroutine_threadsafe(self._call_player_method(
                 service=self._current_player_name,
                 method="Previous"
-            ))
+            ), self._loop)
             return True
         return False
 
     @override
     def next_track(self) -> bool:
         if self._current_player_name:
-            asyncio.run(self._call_player_method(
+            asyncio.run_coroutine_threadsafe(self._call_player_method(
                 service=self._current_player_name,
                 method="Next"
-            ))
+            ), self._loop)
             return True
         return False
 
@@ -265,7 +289,8 @@ class MPRISController(MediaControllerBase):
 
     @override
     def cleanup(self):
-        pass
-        # self._stop_event.set()
-        # self._poll_thread.join(timeout=2)
-        # self._loop.stop()
+        self._stop_event.set()
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=2)
+            self._loop.close()
