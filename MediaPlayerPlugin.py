@@ -50,10 +50,10 @@ class MediaPlayerPlugin(PluginBase):
                             type="paragraph",
                             readonly = False,
                             placeholder = None,
-                            content="Select the media playback method you want to use. The default is the Generic System-Wide Integration, which is the most compatible with most media players.<br />"
-                                    + "The system-wide integration uses native APIs, depending on the platform, to query emdia information and control playback.<br />"
-                                    + "Deeper integration with other media players are available.<br />"
-                                    + "If you want to use the media keys, select Media Keys. This will work with almost anything, but provides no media meta data.<br />"
+                            content="Select the media playback method you want to use. The default is the MPRIS/Windows Media API, which is the most compatible with most media players.<br />"
+                                    + "MPRIS/Windows Media API uses native APIs, depending on the platform, to query media information and control playback.<br />"
+                                    + "MPRIS/Windows Media API does not work with players installed as Snap apps. Use non-snap versions.<br />"
+                                    + "Media Keys will work with almost anything, but provides no playback awareness.<br />"
                                     + "Note: Changing this setting will require restarting the assistant."
                         ),
                         SelectSetting(
@@ -65,10 +65,8 @@ class MediaPlayerPlugin(PluginBase):
                             default_value = self.DEFAULT_PLAYBACK_METHOD,
                             select_options= [
                                 SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
-                                SelectOption(key="system_wide", label="Generic System-Wide Integration", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
+                                SelectOption(key="system_wide", label="MPRIS/Windows Media API (Recommended)", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
                                 SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
-                                SelectOption(key="vlc", label="VLC (NOT IMPLEMENTED)", value="vlc", disabled=True),
-                                SelectOption(key="spotify", label="Spotify (NOT IMPLEMENTED)", value="spotify", disabled=True),
                                 SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
                             ],
                             multi_select=False,
@@ -175,7 +173,7 @@ class MediaPlayerPlugin(PluginBase):
 
     def new_media_event_prompt_handler(self, event: PluginEvent) -> str:
         log('debug', f'New media event: {event}')
-        if (event.plugin_event_name == "MediaPlaybackStateChangedEvent"):
+        if (event.plugin_event_name != "MediaPlaybackStateChangedEvent"):
             raise ValueError("This prompt handler is only for media playback state changed events.")
         log('debug', f'New media event: {event}')
         # Create a message for the assistant
@@ -184,7 +182,7 @@ class MediaPlayerPlugin(PluginBase):
             
 
     def media_player_should_reply_handler(self, event: PluginEvent) -> bool:
-        log('debug', 'new_media_event_prompt_handler triggered', event)
+        log('debug', 'media_player_should_reply_handler triggered', event)
         if event.plugin_event_name != 'MediaPlaybackStateChangedEvent':
             raise ValueError("This should_reply handler is only for media playback state changed events.")
 
@@ -250,9 +248,9 @@ class MediaPlayerPlugin(PluginBase):
             return "Error: Invalid action specified."
 
         if not success:
-            return "Error: Failed to activate Windows Media Session API action: " + args.action
+            return "Error: Failed to activate System-Wide Media action: " + args.action
             
-        return "Activated Windows Media Session API action: " + args.action
+        return "Activated System-Wide Media action: " + args.action
 
     def register_media_keys_actions(self, helper: PluginHelper):
         # Register keybindings
