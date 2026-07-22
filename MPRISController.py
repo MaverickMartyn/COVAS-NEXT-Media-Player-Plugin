@@ -1,3 +1,5 @@
+from asyncio.events import TimerHandle
+
 from dbus_next.message import Message
 from math import floor
 import dbus_next
@@ -34,6 +36,7 @@ class MPRISController(MediaControllerBase):
         self._stop_event: Event = Event()
         self._thread = Thread(target=self._run_loop, daemon=True)
 
+        self._notify_handle: TimerHandle | None = None
         self._last_state: Optional[MediaPlaybackStateInner] = None
         self._current_player_name: str | None = None
         
@@ -122,7 +125,6 @@ class MPRISController(MediaControllerBase):
                 interface="org.mpris.MediaPlayer2.Player",
                 property_name="Metadata"
             )
-            
             shuffle: bool | None = await self._get_property(
                 service=self._current_player_name,
                 interface="org.mpris.MediaPlayer2.Player",
@@ -133,11 +135,11 @@ class MPRISController(MediaControllerBase):
                 interface="org.mpris.MediaPlayer2.Player",
                 property_name="LoopStatus"
             )
-            volume: float | None = await self._get_property(
-                service=self._current_player_name,
-                interface="org.mpris.MediaPlayer2.Player",
-                property_name="Volume"
-            )
+            # volume: float | None = await self._get_property(
+            #     service=self._current_player_name,
+            #     interface="org.mpris.MediaPlayer2.Player",
+            #     property_name="Volume"
+            # )
             artists_list = cast(list[str], (cast(dbus_next.signature.Variant, metadata.get("xesam:artist")) or {"value":None}).value)
             # Concatenate artists
             artists = ', '.join(artists_list) if artists_list else None
@@ -150,12 +152,16 @@ class MPRISController(MediaControllerBase):
                         auto_repeat_mode=loop_status,
                         playback_status=status
                     )
+        else:
+            log('debug', 'No MPRIS players found, setting default playback state.')
+            self._last_state = default_media_playback_state()
+            self._schedule_media_state_notification()
 
     def _on_message(self, msg: message.Message) -> message.Message | bool | None:
-        log('debug', f'Received D-Bus message: {msg.message_type}, {msg.interface}, {msg.member}, {msg.body}')
         if msg.message_type == MessageType.SIGNAL and msg.interface == "org.freedesktop.DBus.Properties" and msg.member == "PropertiesChanged":
             if msg.body[0] == "org.mpris.MediaPlayer2.Player":
-                changed_properties = msg.body[1]
+                log('debug', f'Received D-Bus message: {msg.body}')
+                changed_properties : dict[str, dbus_next.signature.Variant] = msg.body[1]
                 if changed_properties:
                     if self._last_state is None:
                         self._last_state = default_media_playback_state()
@@ -163,10 +169,16 @@ class MPRISController(MediaControllerBase):
                     if "PlaybackStatus" in changed_properties:
                         self._last_state.playback_status = changed_properties["PlaybackStatus"].value
 
+                    if "Shuffle" in changed_properties:
+                        shuffle: bool | None = changed_properties["Shuffle"].value
+                        self._last_state.is_shuffle_active = bool(shuffle) if shuffle is not None else None
+
+                    if "LoopStatus" in changed_properties:
+                        loop_status: str | None = changed_properties["LoopStatus"].value
+                        self._last_state.auto_repeat_mode = loop_status
+
                     if "Metadata" in changed_properties:
-                        metadata = changed_properties["Metadata"].value
-                        shuffle: bool | None = None
-                        loop_status: str | None = None
+                        metadata: dict[str, dbus_next.signature.Variant] = changed_properties["Metadata"].value
                         artists_list = cast(list[str], (cast(dbus_next.signature.Variant, metadata.get("xesam:artist")) or {"value":None}).value)
 
                         # Concatenate artists
@@ -175,20 +187,36 @@ class MPRISController(MediaControllerBase):
                         self._last_state.artist=artists
                         self._last_state.subtitle=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:album")) or {"value":None}).value)
                         self._last_state.title=cast(str, (cast(dbus_next.signature.Variant, metadata.get("xesam:title")) or {"value":None}).value)
-                        self._last_state.is_shuffle_active=bool(shuffle) if shuffle is not None else None
-                        self._last_state.auto_repeat_mode=loop_status
 
                     if self.on_media_playback_info_changed:
-                        self.on_media_playback_info_changed(self._last_state)
+                        self._schedule_media_state_notification()
                     return True
         return False
+
+    def _schedule_media_state_notification(self):
+        log('debug', 'Scheduling media state notification.')
+        if self._notify_handle is not None:
+            log('debug', 'Existing notification handle found, cancelling it before scheduling a new one.')
+            self._notify_handle.cancel()
+
+        self._notify_handle = self._loop.call_later(
+            1,
+            self._notify_media_state_changed
+        )
+
+    def _notify_media_state_changed(self):
+        log('debug', '_notify_media_state_changed called.')
+        self._notify_handle = None
+        if self.on_media_playback_info_changed and self._last_state is not None:
+            log('debug', 'Notifying media playback state change.')
+            self.on_media_playback_info_changed(self._last_state)
 
     async def _get_property(
         self,
         service: str,
         interface: str,
         property_name: str
-    ) -> Any:
+    ) -> Any | None:
         reply: Message | None = await self._bus.call(
             message.Message(
                 destination=service,
@@ -204,7 +232,10 @@ class MPRISController(MediaControllerBase):
         )
         if reply is None:
             log('error', f'Failed to retrieve property {property_name} from {service}.')
-            raise RuntimeError(f"Failed to retrieve property {property_name} from {service}.")
+            return None
+        if reply.message_type == MessageType.ERROR:
+            log('error', f'Failed to retrieve property {property_name} from {service}. Error name: {reply.error_name}, Error: {reply.body[0]}')
+            return None
         log('debug', f'Successfully retrieved property {property_name} from {service}. Value: {reply.body}')
         return reply.body[0].value;
     
