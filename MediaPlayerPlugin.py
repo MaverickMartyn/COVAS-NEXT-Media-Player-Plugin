@@ -50,9 +50,9 @@ class MediaPlayerPlugin(PluginBase):
                             type="paragraph",
                             readonly = False,
                             placeholder = None,
-                            content="Select the media playback method you want to use. The default is the MPRIS/WMAPI, which is the most compatible with most media players.<br />"
-                                    + "MPRIS/WMAPI uses native APIs, depending on the platform, to query media information and control playback.<br />"
-                                    + "MPRIS/WMAPI does not work with players installed as Snap apps. Use non-snap versions.<br />"
+                            content="Select the media playback method you want to use. The default is the MPRIS/Windows Media API, which is the most compatible with most media players.<br />"
+                                    + "MPRIS/Windows Media API uses native APIs, depending on the platform, to query media information and control playback.<br />"
+                                    + "MPRIS/Windows Media API does not work with players installed as Snap apps. Use non-snap versions.<br />"
                                     + "Media Keys will work with almost anything, but provides no playback awareness.<br />"
                                     + "Note: Changing this setting will require restarting the assistant."
                         ),
@@ -65,7 +65,7 @@ class MediaPlayerPlugin(PluginBase):
                             default_value = self.DEFAULT_PLAYBACK_METHOD,
                             select_options= [
                                 SelectOption(key="media_keys", label="Media Keys", value="media_keys", disabled=False),
-                                SelectOption(key="system_wide", label="MPRIS/WMAPI (Recommended)", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
+                                SelectOption(key="system_wide", label="MPRIS/Windows Media API (Recommended)", value="system_wide", disabled=os_name != 'Windows' and os_name != 'Linux'),
                                 SelectOption(key="mpv", label="MPV (NOT IMPLEMENTED)", value="mpv", disabled=True),
                                 SelectOption(key="soundcloud", label="SoundCloud (MAYBE IN THE FUTURE)", value="soundcloud", disabled=True),
                             ],

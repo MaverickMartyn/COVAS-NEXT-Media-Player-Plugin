@@ -8,7 +8,8 @@ Integrates the COVAS:NEXT AI assistant with your media player, allowing the assi
 
 - Support multiple methods for integrating, in order to support a wide variety of media players.
     - Simulated media key presses (Simplest)
-    - Windows Media Session API (Default for Windows. Best general support)
+    - MPRIS/Windows Media API (Default for Windows and Linux. Best general support)
+        - Note: Does not support players installed as Snap packages.
     - More coming later
 - Playlists
     * Add `*.m3u` playlist files to the `playlists` folder, to let the assistant start them for you.
